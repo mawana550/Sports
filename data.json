@@ -1,0 +1,36 @@
+{
+  "rev": 12,
+  "leagueName": "Village League TV",
+  "matches": [
+    {
+      "id": "dc266d4d",
+      "home": "Rock Rangers",
+      "away": "Valley Stars",
+      "homeLogo": "",
+      "awayLogo": "",
+      "league": "Village League",
+      "kickoff": "2026-11-22T20:06:00.865Z",
+      "status": "live",
+      "pinned": true,
+      "sources": [
+        {
+          "type": "hls",
+          "url": "https://pull.niur.live/live/stream-9912122_lhd.m3u8?txSecret=ac489b4d0a6574074cac34a7acddcb36&txTime=6b00fd39",
+          "label": "Main"
+        }
+      ]
+    }
+  ],
+  "commentary": [
+    {
+      "id": "d866ffc1",
+      "label": "luganda",
+      "url": "https://audio.lsaudio.eu/match-en-196Ew31ArD/playlist.m3u8"
+    },
+    {
+      "id": "65771f5d",
+      "label": "emanduso",
+      "url": "https://s5.voscast.com:9905/EMMANDUSO"
+    }
+  ]
+}
