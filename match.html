@@ -19,8 +19,14 @@
   .player video, .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; }
   .player [hidden] { display:none; }
   .status { position:absolute; inset:0; display:grid; place-items:center; color:#cfd5e3; font-size:1.1rem; pointer-events:none; text-align:center; padding:0 20px; }
-  .fs-btn { position:absolute; right:10px; top:10px; z-index:5; border:0; border-radius:8px;
-    padding:8px 12px; background:rgba(0,0,0,.6); color:#fff; font-size:.9rem; }
+  .tools { position:absolute; top:8px; right:8px; z-index:6; display:flex; gap:8px; }
+  .tools button, .unlock { width:40px; height:40px; border-radius:50%; border:1px solid #3a3f4d; background:rgba(28,28,30,.78);
+    color:#fff; display:grid; place-items:center; padding:0; font-size:1rem; }
+  .shield { position:absolute; inset:0; z-index:5; }
+  .unlock { position:absolute; top:8px; right:8px; z-index:7; }
+  .hint { position:absolute; left:50%; top:14px; transform:translateX(-50%); z-index:7; background:rgba(0,0,0,.7); color:#fff;
+    padding:6px 12px; border-radius:16px; font-size:.9rem; pointer-events:none; opacity:0; transition:opacity .2s; }
+  .hint.on { opacity:1; }
 
   .info { padding:16px 14px 4px; }
   .head { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:8px; }
@@ -35,11 +41,12 @@
   body.fs .top, body.fs .info, body.fs .more { display:none; }
   body.fs { overflow:hidden; }
   body.fs .player { position:fixed; inset:0; width:100vw; height:100dvh; aspect-ratio:auto; z-index:9999; }
-  body.fs .fs-btn { top:calc(env(safe-area-inset-top,0px) + 10px); }
+  body.fs .tools, body.fs .unlock { top:calc(env(safe-area-inset-top,0px) + 8px); }
   @media (orientation:landscape) and (max-height:500px) {
     .top, .info, .more { display:none; }
     body { overflow:hidden; }
     .player { position:fixed; inset:0; width:100vw; height:100dvh; aspect-ratio:auto; z-index:9999; }
+    .tools, .unlock { top:calc(env(safe-area-inset-top,0px) + 8px); }
   }
 </style>
 </head>
@@ -50,7 +57,15 @@
   <video id="video" playsinline webkit-playsinline controls autoplay></video>
   <iframe id="frame" hidden allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
   <div class="status" id="status">Connecting…</div>
-  <button class="fs-btn" id="fsBtn" type="button">Full screen</button>
+  <div class="hint" id="hint"></div>
+  <div class="shield" id="shield" hidden></div>
+  <div class="tools" id="tools">
+    <button id="aspBtn" type="button" aria-label="Fit, fill or stretch the picture"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg></button>
+    <button id="pipBtn" type="button" aria-label="Picture in picture"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1"/></svg></button>
+    <button id="lockBtn" type="button" aria-label="Lock the screen"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+    <button id="fsBtn" type="button" aria-label="Full screen"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5"/></svg></button>
+  </div>
+  <button class="unlock" id="unlockBtn" type="button" hidden aria-label="Unlock"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
 </div>
 
 <div class="info" id="info"></div>
@@ -131,16 +146,16 @@ function startAudio(url, cors) {
   } catch {}
   audio.play().catch(() => {});
 }
-function setSound(cid) {
+function setSound(url) {
   stopAudio();
-  const c = S.commentary.find(x => x.id === cid);
+  const c = (M.commentary || []).find(x => x.url === url);
   video.muted = !!c;
   if (c) startAudio(c.url, true); else $('delayBox').hidden = true;
 }
 
 /* ---------- page content ---------- */
 function drawInfo() {
-  const sel = $('sound') ? $('sound').value : '';
+  const com = M.commentary || [], sel = $('sound') ? $('sound').value : '';
   $('info').innerHTML = `
     <div class="head">
       <div class="team">${logo(M.homeLogo, M.home, true)}<span>${esc(M.home)}</span></div>
@@ -148,12 +163,13 @@ function drawInfo() {
       <div class="team">${logo(M.awayLogo, M.away, true)}<span>${esc(M.away)}</span></div>
     </div>
     <div class="meta">${logo(M.leagueLogo, M.league)}<span>${esc(M.league)} · ${esc(whenLabel(M.kickoff))}</span></div>
-    <div class="sound">
+    <div class="sound"${com.length ? '' : ' hidden'}>
       <select id="sound" aria-label="Sound"><option value="">Original sound</option>
-        ${S.commentary.map(c => `<option value="${esc(c.id)}">🎙 ${esc(c.label)}</option>`).join('')}</select>
+        ${com.map(c => `<option value="${esc(c.url)}">🎙 ${esc(c.label)}</option>`).join('')}</select>
       <div class="delay" id="delayBox" hidden>Sync delay <input type="range" id="delay" min="0" max="15" step="0.5" value="${dnode ? dnode.delayTime.value : 0}"><span id="dv">0s</span></div>
     </div>`;
-  const s = $('sound'); s.value = S.commentary.some(c => c.id === sel) ? sel : '';
+  const s = $('sound'); s.value = com.some(c => c.url === sel) ? sel : '';
+  if (!s.value && audio) setSound('');   // admin removed the commentary that was playing
   s.onchange = () => setSound(s.value);
   $('delay').oninput = () => { $('dv').textContent = $('delay').value + 's'; if (dnode) dnode.delayTime.value = +$('delay').value; };
   if (audio && dnode) $('delayBox').hidden = false;
@@ -178,12 +194,32 @@ async function refresh() {
 }
 refresh(); setInterval(refresh, 4000);
 
+/* ---------- picture buttons: fit / fill / stretch, picture-in-picture, lock ---------- */
+const MODES = [['contain', 'Fit'], ['cover', 'Fill'], ['fill', 'Stretch']];
+let mode = 0, hintT = null;
+try { mode = Math.max(0, Math.min(2, +localStorage.vmode || 0)); } catch {}
+const hint = t => { $('hint').textContent = t; $('hint').classList.add('on'); clearTimeout(hintT); hintT = setTimeout(() => $('hint').classList.remove('on'), 1200); };
+const applyMode = () => { video.style.objectFit = MODES[mode][0]; };
+applyMode();
+$('aspBtn').onclick = () => { mode = (mode + 1) % 3; applyMode(); hint(MODES[mode][1]); try { localStorage.vmode = mode; } catch {} };
+if (!document.pictureInPictureEnabled && !video.webkitSetPresentationMode) $('pipBtn').hidden = true;
+$('pipBtn').onclick = () => {
+  if (document.pictureInPictureElement) document.exitPictureInPicture();
+  else if (video.requestPictureInPicture) video.requestPictureInPicture().catch(() => {});
+  else if (video.webkitSetPresentationMode) video.webkitSetPresentationMode('picture-in-picture');
+};
+function setLock(on) {
+  $('shield').hidden = $('unlockBtn').hidden = !on; $('tools').hidden = on; video.controls = !on;
+  if (on) hint('Screen locked');
+}
+$('lockBtn').onclick = () => setLock(true); $('unlockBtn').onclick = () => setLock(false);
+
 /* ---------- full screen ---------- */
 let fake = false;
 function setFake(on) { fake = on; document.body.classList.toggle('fs', on); }
 function enterFs() {
+  // our own full screen keeps the Fit / Fill / Stretch buttons on screen (iPhone's native player would hide them)
   if (player.requestFullscreen) player.requestFullscreen().catch(() => setFake(true));
-  else if (video.webkitEnterFullscreen && !video.hidden) { try { video.webkitEnterFullscreen(); } catch { setFake(true); } }
   else setFake(true);
 }
 function exitFs() { if (document.fullscreenElement) document.exitFullscreen(); setFake(false); }
