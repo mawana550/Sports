@@ -9,7 +9,9 @@ const viewerId = (() => {
 async function getState() {
   const r = await fetch('/api/state?c=' + viewerId, { cache: 'no-store' });
   if (!r.ok) throw new Error('state ' + r.status);
-  return r.json();
+  const j = await r.json();
+  try { sessionStorage.vstate = JSON.stringify(j); } catch {}
+  return j;
 }
 
 // Badge image, or a lettered circle when there is no link or the image fails to load
