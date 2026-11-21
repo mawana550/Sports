@@ -8,6 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#05070c">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link rel="manifest" href="/manifest.json">
 <link rel="stylesheet" href="/common.css">
 <style>
@@ -79,14 +80,17 @@
 <div class="info" id="info"></div>
 <div class="more" id="more"></div>
 
-<script>if (!/iP(hone|ad|od)/.test(navigator.userAgent) && !(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
-  document.write('<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"><\/script>');</script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
 <script src="/common.js"></script>
 <script>
 const id = new URLSearchParams(location.search).get('id');
 const video = $('video'), frame = $('frame'), player = $('player');
 const isApple = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const useHlsJs = () => window.Hls && Hls.isSupported() && !isApple;
+let nativeFallback = false;
+try { nativeFallback = sessionStorage.vnative === '1'; } catch {}
+// hls.js everywhere it works (laptops, Androids and iPhones on iOS 17.1+), so every device starts and keeps up with the live source the same way;
+// older iPhones, or a phone where hls.js fails, use Apple's built-in player
+const useHlsJs = () => window.Hls && Hls.isSupported() && !nativeFallback;
 let S = null, M = null, rev = -1, idx = 0, fails = 0, hls = null, timer = null, curKey = '', stuckAt = 0, lastT = -1;
 
 let audioNeedsTap = false, defaultDone = false, shown = false, soonT = null, autoMuted = false, curProxy = false;
@@ -124,6 +128,7 @@ function play(viaProxy) {
   curProxy = viaProxy;
   const url = viaProxy ? '/proxy?u=' + encodeURIComponent(src.url) : src.url;
   if (useHlsJs()) {
+    if (isApple) video.disableRemotePlayback = true;   // needed for hls.js on iPhone
     hls = new Hls({
       lowLatencyMode: true,
       abrEwmaDefaultEstimate: 3e6,             // open in a medium quality so the first picture appears fast, then climb
@@ -137,8 +142,16 @@ function play(viaProxy) {
     });
     hls.loadSource(url); hls.attachMedia(video);
     hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
-    hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) retry(viaProxy); });
+    hls.on(Hls.Events.ERROR, (e, d) => {
+      if (!d.fatal) return;
+      const proxyTried = viaProxy || !(S && S.proxyOk);
+      if (isApple && !nativeFallback && proxyTried) {   // hls.js did not work on this iPhone: use Apple's player (and remember it)
+        nativeFallback = true; try { sessionStorage.vnative = '1'; } catch {} return play(false);
+      }
+      retry(viaProxy);
+    });
   } else {
+    video.disableRemotePlayback = false;
     video.src = url; tryPlay();
   }
 }
@@ -171,7 +184,7 @@ function startAudio(url, cors) {
   if (cors) audio.crossOrigin = 'anonymous';
   const fallback = () => { if (cors) { stopAudio(); startAudio(url, false); } };   // station blocks CORS: play without the delay
   audio.addEventListener('error', fallback);
-  if (/\.m3u8(\?|$)/i.test(url) && useHlsJs()) {
+  if (/\.m3u8(\?|$)/i.test(url) && useHlsJs() && !isApple) {
     ahls = new Hls(); ahls.loadSource(url); ahls.attachMedia(audio);
     ahls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) fallback(); });
   } else audio.src = url;
