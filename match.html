@@ -60,7 +60,7 @@
 <div class="top"><a class="back" href="/">← Matches</a><span class="brand" id="brand">Rock Videos</span></div>
 
 <div class="player" id="player">
-  <video id="video" playsinline webkit-playsinline controls autoplay></video>
+  <video id="video" playsinline webkit-playsinline controls autoplay preload="auto"></video>
   <iframe id="frame" hidden allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
   <div class="status" id="status" style="display:none"></div>
   <button class="unmute" id="unmute" type="button" hidden>🔈 Tap to unmute</button>
@@ -79,7 +79,8 @@
 <div class="info" id="info"></div>
 <div class="more" id="more"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script>if (!/iP(hone|ad|od)/.test(navigator.userAgent) && !(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
+  document.write('<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"><\/script>');</script>
 <script src="/common.js"></script>
 <script>
 const id = new URLSearchParams(location.search).get('id');
@@ -88,7 +89,7 @@ const isApple = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platfor
 const useHlsJs = () => window.Hls && Hls.isSupported() && !isApple;
 let S = null, M = null, rev = -1, idx = 0, fails = 0, hls = null, timer = null, curKey = '', stuckAt = 0, lastT = -1;
 
-let soonT = null, autoMuted = false, curProxy = false;
+let audioNeedsTap = false, defaultDone = false, shown = false, soonT = null, autoMuted = false, curProxy = false;
 function setStatus(t) { clearTimeout(soonT); $('status').textContent = t; $('status').style.display = t ? 'grid' : 'none'; }
 function setSoon(t, ms) { clearTimeout(soonT); $('status').style.display = 'none'; soonT = setTimeout(() => setStatus(t), ms); }   // stay quiet unless it takes long
 const hostOf = u => { try { return new URL(u).host; } catch { return ''; } };
@@ -97,7 +98,11 @@ function tryPlay() {            // start by itself; if the browser insists on a 
   const p = video.play();
   if (p && p.catch) p.catch(() => { if (video.muted) return; video.muted = true; autoMuted = true; $('unmute').hidden = false; video.play().catch(() => {}); });
 }
-$('unmute').onclick = () => { video.muted = false; autoMuted = false; $('unmute').hidden = true; video.play().catch(() => {}); };
+$('unmute').onclick = () => {
+  if (audioNeedsTap && audio) { audioNeedsTap = false; if (ctx) ctx.resume(); audio.play().catch(() => {}); }
+  else { video.muted = false; autoMuted = false; }
+  $('unmute').hidden = true; video.play().catch(() => {});
+};
 video.addEventListener('volumechange', () => { if (!video.muted) { autoMuted = false; $('unmute').hidden = true; } });
 
 /* ---------- video: direct link first, then through the server proxy, backup links, self-healing ---------- */
@@ -177,14 +182,14 @@ function startAudio(url, cors) {
     ctx.createMediaElementSource(audio).connect(dnode); dnode.connect(ctx.destination);
     ctx.resume(); $('delayBox').hidden = false;
   } catch {}
-  audio.play().catch(() => {});
+  audio.play().catch(() => { audioNeedsTap = true; $('unmute').textContent = '🎙 Tap to hear commentary'; $('unmute').hidden = false; });
 }
 function setSound(url) {
   stopAudio();
   const c = (M.commentary || []).find(x => x.url === url);
   video.muted = !!c;
   if (c) { autoMuted = false; $('unmute').hidden = true; }
-  if (c) startAudio(c.url, true); else $('delayBox').hidden = true;
+  if (c) startAudio(c.url, !(isApple && /\.m3u8(\?|$)/i.test(c.url))); else $('delayBox').hidden = true;
 }
 
 /* ---------- page content ---------- */
@@ -212,20 +217,34 @@ function drawMore() {
   const others = visibleMatches(S).filter(m => m.id !== M.id);
   $('more').innerHTML = others.length ? '<h3>More matches</h3>' + leagueCards(others, M.id) : '';
 }
+const isEnglish = c => /english|\beng\b/i.test(c.label);
+function applyState(first) {
+  shown = true;
+  M = S.matches.find(x => x.id === id);
+  if (!M) { $('info').innerHTML = '<div class="empty">This match was removed. <a href="/" style="color:var(--brand)">See all matches</a></div>'; setStatus(''); return; }
+  document.title = M.home + ' vs ' + M.away + ' · ' + (S.siteName || 'Rock Videos');
+  $('brand').textContent = S.siteName || 'Rock Videos';
+  if (idx >= M.sources.length) idx = 0;
+  drawInfo(); drawMore();
+  if (first && !defaultDone) {                                  // sound starts on the English commentary when the match has one
+    defaultDone = true;
+    const e = (M.commentary || []).find(isEnglish);
+    if (e) { $('sound').value = e.url; setSound(e.url); }
+  }
+  if (first || (M.sources[idx] ? M.sources[idx].url : '') !== curKey) { fails = 0; play(false); }   // admin changed the link: switch by itself
+}
 async function refresh() {
   try {
-    const n = await getState(), first = rev < 0, changed = n.rev !== rev;
-    S = n; rev = n.rev;
-    $('brand').textContent = S.siteName || 'Rock Videos';
-    if (!(changed || first)) return;
-    M = S.matches.find(x => x.id === id);
-    if (!M) { M = null; $('info').innerHTML = '<div class="empty">This match was removed. <a href="/" style="color:var(--brand)">See all matches</a></div>'; setStatus(''); return; }
-    document.title = M.home + ' vs ' + M.away + ' · ' + (S.siteName || 'Rock Videos');
-    if (idx >= M.sources.length) idx = 0;
-    drawInfo(); drawMore();
-    if (first || (M.sources[idx] ? M.sources[idx].url : '') !== curKey) { fails = 0; play(false); }   // admin changed the link: switch by itself
+    const n = await getState(), changed = n.rev !== rev;
+    S = n; $('brand').textContent = S.siteName || 'Rock Videos';
+    if (shown && !changed) return;
+    rev = n.rev; applyState(!shown);
   } catch { if (!S) setStatus('Could not load this match. Check your connection.'); }
 }
+try {                                                           // the home page already loaded the data: use it, so the video starts at once
+  const c = JSON.parse(sessionStorage.vstate || 'null');
+  if (c && c.matches && c.matches.some(x => x.id === id)) { S = c; rev = c.rev; applyState(true); }
+} catch {}
 refresh(); setInterval(refresh, 4000);
 
 /* ---------- picture buttons: fit / fill / stretch, picture-in-picture, lock ---------- */
