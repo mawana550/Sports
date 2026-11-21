@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rock Videos</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05070c">
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="/common.css">
+<style>
+  .top { display:flex; align-items:center; justify-content:space-between; padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 10px; }
+  .back { text-decoration:none; font-weight:600; padding:6px 0; }
+  .top .brand { font-size:1.1rem; }
+
+  .player { position:relative; width:100%; aspect-ratio:16/9; background:#000; }
+  .player video, .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; }
+  .player [hidden] { display:none; }
+  .status { position:absolute; inset:0; display:grid; place-items:center; color:#cfd5e3; font-size:1.1rem; pointer-events:none; text-align:center; padding:0 20px; }
+  .fs-btn { position:absolute; right:10px; top:10px; z-index:5; border:0; border-radius:8px;
+    padding:8px 12px; background:rgba(0,0,0,.6); color:#fff; font-size:.9rem; }
+
+  .info { padding:16px 14px 4px; }
+  .head { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:8px; }
+  .meta { margin-top:10px; text-align:center; color:var(--muted); font-size:.95rem; display:flex; justify-content:center; align-items:center; gap:8px; }
+  .sound { margin:14px 0 4px; display:flex; flex-direction:column; gap:10px; }
+  .sound select { background:var(--panel); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; padding:10px 12px; font-size:1rem; width:100%; }
+  .delay { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:.9rem; }
+  .delay input { flex:1; accent-color:var(--brand); }
+  .more h3 { margin:24px 14px 0; font-size:1.05rem; }
+
+  body.fs .top, body.fs .info, body.fs .more { display:none; }
+  body.fs { overflow:hidden; }
+  body.fs .player { position:fixed; inset:0; width:100vw; height:100dvh; aspect-ratio:auto; z-index:9999; }
+  body.fs .fs-btn { top:calc(env(safe-area-inset-top,0px) + 10px); }
+  @media (orientation:landscape) and (max-height:500px) {
+    .top, .info, .more { display:none; }
+    body { overflow:hidden; }
+    .player { position:fixed; inset:0; width:100vw; height:100dvh; aspect-ratio:auto; z-index:9999; }
+  }
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">← Matches</a><span class="brand" id="brand">Rock Videos</span></div>
+
+<div class="player" id="player">
+  <video id="video" playsinline webkit-playsinline controls autoplay></video>
+  <iframe id="frame" hidden allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
+  <div class="status" id="status">Connecting…</div>
+  <button class="fs-btn" id="fsBtn" type="button">Full screen</button>
+</div>
+
+<div class="info" id="info"></div>
+<div class="more" id="more"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script src="/common.js"></script>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+const video = $('video'), frame = $('frame'), player = $('player');
+const isApple = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const useHlsJs = () => window.Hls && Hls.isSupported() && !isApple;
+let S = null, M = null, rev = -1, idx = 0, fails = 0, hls = null, timer = null, curKey = '', stuckAt = 0, lastT = -1;
+
+function setStatus(t) { $('status').textContent = t; $('status').style.display = t ? 'grid' : 'none'; }
+
+/* ---------- video: direct link first, then through the server proxy, backup links, self-healing ---------- */
+function stopVideo() {
+  clearTimeout(timer);
+  if (hls) { hls.destroy(); hls = null; }
+  video.removeAttribute('src'); video.load();
+  frame.removeAttribute('src');
+}
+function play(viaProxy) {
+  stopVideo();
+  const src = M && M.sources[idx];
+  curKey = src ? src.url : '';
+  if (!src) { setStatus(M && M.status === 'live' ? 'Stream starting soon…' : 'The stream is not available yet'); return; }
+  setStatus('Connecting…');
+  if (src.type === 'embed') { video.hidden = true; frame.hidden = false; frame.src = src.url; setStatus(''); return; }
+  frame.hidden = true; video.hidden = false;
+  const url = viaProxy ? '/proxy?u=' + encodeURIComponent(src.url) : src.url;
+  if (useHlsJs()) {
+    hls = new Hls({ lowLatencyMode: true });
+    hls.loadSource(url); hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) retry(viaProxy); });
+  } else {
+    video.src = url; video.play().catch(() => {});
+  }
+}
+function retry(wasProxy) {
+  clearTimeout(timer);
+  if (!wasProxy && S && S.proxyOk) return play(true);       // blocked directly? try via the server
+  fails++;
+  if (fails >= 3 && M.sources.length > 1) { idx = (idx + 1) % M.sources.length; fails = 0; }   // next backup link
+  setStatus('Reconnecting…');
+  timer = setTimeout(() => play(false), Math.min(1000 * 2 ** fails, 8000));
+}
+video.addEventListener('error', () => { if (video.getAttribute('src')) retry(video.src.includes('/proxy?u=')); });
+video.addEventListener('playing', () => { fails = 0; setStatus(''); });
+setInterval(() => {                                          // restart if the picture freezes for 12 seconds
+  if (!curKey || video.hidden || video.paused || video.readyState < 2) { stuckAt = 0; return; }
+  if (video.currentTime !== lastT) { lastT = video.currentTime; stuckAt = 0; return; }
+  stuckAt += 3;
+  if (stuckAt >= 12) { stuckAt = 0; retry(video.src.includes('/proxy?u=')); }
+}, 3000);
+window.addEventListener('online', () => { fails = 0; play(false); });
+
+/* ---------- commentary (replaces the video sound, with a sync delay) ---------- */
+let audio = null, ahls = null, ctx = null, dnode = null;
+function stopAudio() { if (ahls) { ahls.destroy(); ahls = null; } if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); audio = null; } }
+function startAudio(url, cors) {
+  audio = new Audio();
+  if (cors) audio.crossOrigin = 'anonymous';
+  const fallback = () => { if (cors) { stopAudio(); startAudio(url, false); } };   // station blocks CORS: play without the delay
+  audio.addEventListener('error', fallback);
+  if (/\.m3u8(\?|$)/i.test(url) && useHlsJs()) {
+    ahls = new Hls(); ahls.loadSource(url); ahls.attachMedia(audio);
+    ahls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) fallback(); });
+  } else audio.src = url;
+  $('delayBox') && ($('delayBox').hidden = true);
+  if (cors) try {
+    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+    dnode = ctx.createDelay(20); dnode.delayTime.value = +$('delay').value;
+    ctx.createMediaElementSource(audio).connect(dnode); dnode.connect(ctx.destination);
+    ctx.resume(); $('delayBox').hidden = false;
+  } catch {}
+  audio.play().catch(() => {});
+}
+function setSound(cid) {
+  stopAudio();
+  const c = S.commentary.find(x => x.id === cid);
+  video.muted = !!c;
+  if (c) startAudio(c.url, true); else $('delayBox').hidden = true;
+}
+
+/* ---------- page content ---------- */
+function drawInfo() {
+  const sel = $('sound') ? $('sound').value : '';
+  $('info').innerHTML = `
+    <div class="head">
+      <div class="team">${logo(M.homeLogo, M.home, true)}<span>${esc(M.home)}</span></div>
+      <div class="mid"><span class="vs">vs</span>${M.status === 'live' ? '<span class="live">LIVE</span>' : ''}</div>
+      <div class="team">${logo(M.awayLogo, M.away, true)}<span>${esc(M.away)}</span></div>
+    </div>
+    <div class="meta">${logo(M.leagueLogo, M.league)}<span>${esc(M.league)} · ${esc(whenLabel(M.kickoff))}</span></div>
+    <div class="sound">
+      <select id="sound" aria-label="Sound"><option value="">Original sound</option>
+        ${S.commentary.map(c => `<option value="${esc(c.id)}">🎙 ${esc(c.label)}</option>`).join('')}</select>
+      <div class="delay" id="delayBox" hidden>Sync delay <input type="range" id="delay" min="0" max="15" step="0.5" value="${dnode ? dnode.delayTime.value : 0}"><span id="dv">0s</span></div>
+    </div>`;
+  const s = $('sound'); s.value = S.commentary.some(c => c.id === sel) ? sel : '';
+  s.onchange = () => setSound(s.value);
+  $('delay').oninput = () => { $('dv').textContent = $('delay').value + 's'; if (dnode) dnode.delayTime.value = +$('delay').value; };
+  if (audio && dnode) $('delayBox').hidden = false;
+}
+function drawMore() {
+  const others = visibleMatches(S).filter(m => m.id !== M.id);
+  $('more').innerHTML = others.length ? '<h3>More matches</h3>' + leagueCards(others, M.id) : '';
+}
+async function refresh() {
+  try {
+    const n = await getState(), first = rev < 0, changed = n.rev !== rev;
+    S = n; rev = n.rev;
+    $('brand').textContent = S.siteName || 'Rock Videos';
+    if (!(changed || first)) return;
+    M = S.matches.find(x => x.id === id);
+    if (!M) { M = null; $('info').innerHTML = '<div class="empty">This match was removed. <a href="/" style="color:var(--brand)">See all matches</a></div>'; setStatus(''); return; }
+    document.title = M.home + ' vs ' + M.away + ' · ' + (S.siteName || 'Rock Videos');
+    if (idx >= M.sources.length) idx = 0;
+    drawInfo(); drawMore();
+    if (first || (M.sources[idx] ? M.sources[idx].url : '') !== curKey) { fails = 0; play(false); }   // admin changed the link: switch by itself
+  } catch { if (!S) setStatus('Could not load this match. Check your connection.'); }
+}
+refresh(); setInterval(refresh, 4000);
+
+/* ---------- full screen ---------- */
+let fake = false;
+function setFake(on) { fake = on; document.body.classList.toggle('fs', on); }
+function enterFs() {
+  if (player.requestFullscreen) player.requestFullscreen().catch(() => setFake(true));
+  else if (video.webkitEnterFullscreen && !video.hidden) { try { video.webkitEnterFullscreen(); } catch { setFake(true); } }
+  else setFake(true);
+}
+function exitFs() { if (document.fullscreenElement) document.exitFullscreen(); setFake(false); }
+$('fsBtn').onclick = () => (document.fullscreenElement || fake) ? exitFs() : enterFs();
+video.addEventListener('dblclick', enterFs);
+matchMedia('(orientation: landscape)').addEventListener('change', e => {
+  if (e.matches && !document.fullscreenElement && player.requestFullscreen) player.requestFullscreen().catch(() => {});
+  if (!e.matches) exitFs();
+});
+</script>
+</body>
+</html>

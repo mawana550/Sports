@@ -1,0 +1,31 @@
+:root { --bg:#05070c; --panel:#121827; --line:#222b3f; --text:#f2f5fb; --muted:#8b95ab; --live:#e5484d; --brand:#ff7a1a; }
+* { box-sizing:border-box; }
+html, body { margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+body { padding-bottom:env(safe-area-inset-bottom,0px); }
+a { color:inherit; }
+
+.brand { color:var(--brand); font-weight:800; letter-spacing:-.01em; }
+
+.league { padding:0 14px; }
+.league-head { display:flex; align-items:center; gap:10px; margin:24px 0 10px; }
+.league-head h2 { margin:0; font-size:1.05rem; font-weight:700; }
+
+/* badge image, with a lettered circle as fallback */
+.logo { width:28px; height:28px; border-radius:50%; flex:none; object-fit:contain; background:#1b2338; }
+.logo.lg { width:46px; height:46px; }
+.fallback { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; flex:none;
+  background:#26304a; color:#cfd6e6; font-weight:700; font-size:.8rem; }
+.fallback.lg { width:46px; height:46px; font-size:1.1rem; }
+
+.card { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:8px;
+  padding:14px 10px; margin-bottom:10px; background:var(--panel); border:1px solid var(--line);
+  border-radius:12px; color:inherit; text-decoration:none; }
+.card.current { border-color:var(--brand); }
+.team { display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center;
+  font-weight:600; font-size:.95rem; line-height:1.2; min-width:0; overflow-wrap:anywhere; }
+.mid { display:flex; flex-direction:column; align-items:center; gap:4px; min-width:84px; }
+.vs { color:var(--muted); font-weight:700; font-size:.95rem; }
+.when { color:var(--muted); font-size:.85rem; text-align:center; }
+.live { background:var(--live); color:#fff; font-size:.75rem; font-weight:700; padding:3px 8px; border-radius:6px; }
+.empty { padding:20px 14px; color:var(--muted); }
