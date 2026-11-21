@@ -18,6 +18,8 @@
   .player { position:relative; width:100%; height:min(56.25vw, calc(100dvh - 72px)); background:#000; }
   .player:fullscreen { width:100vw; height:100vh; }
   .player:-webkit-full-screen { width:100vw; height:100vh; }
+  .unmute { position:absolute; left:10px; top:8px; z-index:7; background:rgba(0,0,0,.72); color:#fff; border:1px solid #3a3f4d;
+    border-radius:20px; padding:8px 14px; font-size:.95rem; }
   .tapfs { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:6; background:rgba(0,0,0,.72); color:#fff;
     border:2px solid var(--brand); border-radius:28px; padding:12px 22px; font-size:1.05rem; font-weight:600; }
   .player video, .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; }
@@ -60,7 +62,8 @@
 <div class="player" id="player">
   <video id="video" playsinline webkit-playsinline controls autoplay></video>
   <iframe id="frame" hidden allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
-  <div class="status" id="status">Connecting…</div>
+  <div class="status" id="status" style="display:none"></div>
+  <button class="unmute" id="unmute" type="button" hidden>🔈 Tap to unmute</button>
   <button class="tapfs" id="tapFs" type="button" hidden>Tap for full screen</button>
   <div class="hint" id="hint"></div>
   <div class="shield" id="shield" hidden></div>
@@ -85,7 +88,17 @@ const isApple = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platfor
 const useHlsJs = () => window.Hls && Hls.isSupported() && !isApple;
 let S = null, M = null, rev = -1, idx = 0, fails = 0, hls = null, timer = null, curKey = '', stuckAt = 0, lastT = -1;
 
-function setStatus(t) { $('status').textContent = t; $('status').style.display = t ? 'grid' : 'none'; }
+let soonT = null, autoMuted = false, curProxy = false;
+function setStatus(t) { clearTimeout(soonT); $('status').textContent = t; $('status').style.display = t ? 'grid' : 'none'; }
+function setSoon(t, ms) { clearTimeout(soonT); $('status').style.display = 'none'; soonT = setTimeout(() => setStatus(t), ms); }   // stay quiet unless it takes long
+const hostOf = u => { try { return new URL(u).host; } catch { return ''; } };
+const proxied = () => { try { return JSON.parse(sessionStorage.vproxy || '[]'); } catch { return []; } };
+function tryPlay() {            // start by itself; if the browser insists on a tap for sound, play muted with an unmute button
+  const p = video.play();
+  if (p && p.catch) p.catch(() => { if (video.muted) return; video.muted = true; autoMuted = true; $('unmute').hidden = false; video.play().catch(() => {}); });
+}
+$('unmute').onclick = () => { video.muted = false; autoMuted = false; $('unmute').hidden = true; video.play().catch(() => {}); };
+video.addEventListener('volumechange', () => { if (!video.muted) { autoMuted = false; $('unmute').hidden = true; } });
 
 /* ---------- video: direct link first, then through the server proxy, backup links, self-healing ---------- */
 function stopVideo() {
@@ -99,23 +112,29 @@ function play(viaProxy) {
   const src = M && M.sources[idx];
   curKey = src ? src.url : '';
   if (!src) { setStatus(M && M.status === 'live' ? 'Stream starting soon…' : 'The stream is not available yet'); return; }
-  setStatus('Connecting…');
+  setSoon('Connecting…', 6000);
   if (src.type === 'embed') { video.hidden = true; frame.hidden = false; frame.src = src.url; setStatus(''); return; }
   frame.hidden = true; video.hidden = false;
+  if (!viaProxy && S && S.proxyOk && proxied().includes(hostOf(src.url))) viaProxy = true;   // this source needed the server before: go straight there
+  curProxy = viaProxy;
   const url = viaProxy ? '/proxy?u=' + encodeURIComponent(src.url) : src.url;
   if (useHlsJs()) {
     hls = new Hls({
       lowLatencyMode: true,
-      abrEwmaDefaultEstimate: 25e6,            // start as if the connection is fast, so it opens in the highest quality
+      abrEwmaDefaultEstimate: 3e6,             // open in a medium quality so the first picture appears fast, then climb
+      abrBandWidthUpFactor: 0.75,              // climb to higher quality quickly once the speed is measured
       abrEwmaFastLive: 2, abrEwmaSlowLive: 6,  // notice a slowing connection sooner
       abrBandWidthFactor: 0.8,                 // step down a little early, before the picture can freeze
-      maxBufferLength: 12, backBufferLength: 10, liveSyncDurationCount: 3
+      startFragPrefetch: true,                 // fetch the first video piece while the playlist is still loading
+      manifestLoadingMaxRetry: 1, manifestLoadingRetryDelay: 300, levelLoadingMaxRetry: 1, levelLoadingRetryDelay: 300,
+      liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 5, maxLiveSyncPlaybackRate: 1.1,   // stay close to the live source
+      maxBufferLength: 12, backBufferLength: 10
     });
     hls.loadSource(url); hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
     hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) retry(viaProxy); });
   } else {
-    video.src = url; video.play().catch(() => {});
+    video.src = url; tryPlay();
   }
 }
 function retry(wasProxy) {
@@ -123,11 +142,14 @@ function retry(wasProxy) {
   if (!wasProxy && S && S.proxyOk) return play(true);       // blocked directly? try via the server
   fails++;
   if (fails >= 3 && M.sources.length > 1) { idx = (idx + 1) % M.sources.length; fails = 0; }   // next backup link
-  setStatus('Reconnecting…');
+  setSoon('Reconnecting…', 4000);
   timer = setTimeout(() => play(false), Math.min(1000 * 2 ** fails, 8000));
 }
 video.addEventListener('error', () => { if (video.getAttribute('src')) retry(video.src.includes('/proxy?u=')); });
-video.addEventListener('playing', () => { fails = 0; setStatus(''); });
+video.addEventListener('playing', () => {
+  fails = 0; setStatus('');
+  if (curProxy && curKey) { const h = hostOf(curKey), l = proxied(); if (h && !l.includes(h)) try { sessionStorage.vproxy = JSON.stringify(l.concat(h)); } catch {} }
+});
 setInterval(() => {                                          // restart if the picture freezes for 12 seconds
   if (!curKey || video.hidden || video.paused || video.readyState < 2) { stuckAt = 0; return; }
   if (video.currentTime !== lastT) { lastT = video.currentTime; stuckAt = 0; return; }
@@ -161,6 +183,7 @@ function setSound(url) {
   stopAudio();
   const c = (M.commentary || []).find(x => x.url === url);
   video.muted = !!c;
+  if (c) { autoMuted = false; $('unmute').hidden = true; }
   if (c) startAudio(c.url, true); else $('delayBox').hidden = true;
 }
 
