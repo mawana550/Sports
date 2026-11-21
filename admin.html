@@ -48,7 +48,7 @@ a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
 
 <div id="app" hidden>
 <div class="top"><h1>⚽ Dashboard</h1><span><a href="/" target="_blank">viewer ↗</a> &nbsp;<button id="logoutBtn">Log out</button></span></div>
-<div class="tabs"><button data-tab="matches" class="on">Matches</button><button data-tab="teams">Teams</button><button data-tab="coms">Commentary</button><button data-tab="set">Settings</button></div>
+<div class="tabs"><button data-tab="matches" class="on">Matches</button><button data-tab="teams">Teams</button><button data-tab="set">Settings</button></div>
 
 <section id="t-matches">
 <div class="bar"><button class="pri" id="newMatch">＋ New match</button><input id="q" placeholder="Search matches…"></div>
@@ -61,9 +61,6 @@ a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
 <div id="teams"></div>
 </section>
 
-<section id="t-coms" hidden><div class="box"><div id="coms"></div>
-<div class="acts"><button id="addCom">＋ Add commentary</button><button class="pri" id="saveCom">Save</button></div>
-<div class="meta">Use the station's online stream URL (.mp3 / .aac / Icecast). An FM frequency cannot be read by a website.</div></div></section>
 
 <section id="t-set" hidden><div class="box"><label>Site name (shown in orange at the top of the home page)</label><input id="sname"><label>League name</label><div class="bar"><input id="lname"><button class="pri" id="saveName">Save</button></div></div></section>
 </div>
@@ -76,6 +73,7 @@ a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
 <label>Competition badge link (optional)</label><input id="leagueLogo" placeholder="https://…/league.png">
 <div class="g2"><div><label>Status</label><select id="status"><option value="upcoming">Upcoming</option><option value="live">Live</option><option value="finished">Finished</option></select></div></div>
 <details id="srcDet" style="margin-top:10px"><summary style="cursor:pointer;color:var(--cyan);font-size:.85rem">Stream links (optional)</summary><div id="srcs"></div></details>
+<details id="comDet" style="margin-top:10px"><summary style="cursor:pointer;color:var(--cyan);font-size:.85rem">Commentary links for this match (optional)</summary><div id="coms"></div><div class="meta">Use the station's online stream (.mp3 / .aac / .m3u8). Viewers pick it from the 🎙 menu on this match.</div></details>
 <div class="chk"><input type="checkbox" id="pinned"><label for="pinned" style="margin:0;color:#fff;font-size:.9rem">📌 Pin to the top</label></div>
 <div class="acts"><button class="pri" id="saveBtn">Save</button><button id="anotherBtn">Save &amp; add another</button><button id="cancelM">Cancel</button></div>
 </dialog>
@@ -125,7 +123,7 @@ async function start(){ $('login').style.display = 'none'; $('app').hidden = fal
 document.addEventListener('click', e => document.querySelectorAll('details.more[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; }));
 document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('on', x === b));
-  ['matches','teams','coms','set'].forEach(t => $('t-' + t).hidden = t !== b.dataset.tab);
+  ['matches','teams','set'].forEach(t => $('t-' + t).hidden = t !== b.dataset.tab);
 });
 document.querySelectorAll('.chip').forEach(b => b.onclick = () => { filter = b.dataset.f; document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); renderMatches(); });
 $('q').oninput = renderMatches; $('tq').oninput = renderTeams;
@@ -190,12 +188,18 @@ function buildSrc(list){
     h += '<div class="srow"><select class="stype"><option value="hls"' + (s.type !== 'embed' ? ' selected' : '') + '>Video (.m3u8)</option><option value="embed"' + (s.type === 'embed' ? ' selected' : '') + '>Embed page</option></select><input class="surl" placeholder="https://…/stream.m3u8" value="' + esc(s.url || '') + '"><input class="slabel" placeholder="Label (optional)" value="' + esc(s.label || '') + '"></div>'; }
   $('srcs').innerHTML = h;
 }
+function buildCom(list){
+  let h = ''; for (let i = 0; i < 3; i++) { const c = list[i] || {};
+    h += '<div class="srow" style="grid-template-columns:1fr"><input class="clabel" placeholder="Label, e.g. Luganda commentary" value="' + esc(c.label || '') + '"><input class="curl" placeholder="https://…/stream.mp3" value="' + esc(c.url || '') + '"></div>'; }
+  $('coms').innerHTML = h;
+}
 function showTeams(){ for (const [id, k] of [['pickHome','home'],['pickAway','away']]) $(id).innerHTML = F[k] ? badge(F[k].logo) + '<span>' + esc(F[k].name) + '</span>' : '<span style="color:var(--muted)">Choose team…</span>'; }
 function openMatch(m){
   F = { id: m && m.id || '', home: m ? { id: m.homeId || '', name: m.home, logo: m.homeLogo } : null, away: m ? { id: m.awayId || '', name: m.away, logo: m.awayLogo } : null };
   $('league').value = m ? m.league : lastLeague; $('leagueLogo').value = m ? (m.leagueLogo || '') : lastLeagueLogo; $('kick').value = toLocalInput(m ? m.kickoff : new Date(Date.now() + 36e5).toISOString());
   $('status').value = m ? m.status : 'upcoming'; $('pinned').checked = m ? m.pinned : true;
   buildSrc(m ? m.sources : []); $('srcDet').open = !!(m && m.sources.length);
+  buildCom(m ? (m.commentary || []) : []); $('comDet').open = !!(m && m.commentary && m.commentary.length);
   $('anotherBtn').style.display = F.id ? 'none' : ''; $('mTitle').textContent = F.id ? 'Edit match' : 'New match';
   showTeams(); $('matchDlg').showModal();
 }
@@ -206,11 +210,12 @@ async function saveMatch(another){
   const types = [...document.querySelectorAll('.stype')], urls = [...document.querySelectorAll('.surl')], labels = [...document.querySelectorAll('.slabel')];
   const d = { home: F.home.name, homeId: F.home.id, homeLogo: F.home.logo, away: F.away.name, awayId: F.away.id, awayLogo: F.away.logo, league: $('league').value, leagueLogo: $('leagueLogo').value.trim(),
     kickoff: $('kick').value ? new Date($('kick').value).toISOString() : new Date().toISOString(), status: $('status').value, pinned: $('pinned').checked,
+    commentary: [...document.querySelectorAll('#coms .srow')].map(r => ({ label: r.querySelector('.clabel').value, url: r.querySelector('.curl').value.trim() })).filter(c => c.url),
     sources: urls.map((u,i) => ({ type: types[i].value, url: u.value.trim(), label: labels[i].value })).filter(s => s.url) };
   try {
     F.id ? await api('PUT', '/api/admin/matches/' + F.id, d) : await api('POST', '/api/admin/matches', d);
     lastLeague = d.league || lastLeague; lastLeagueLogo = d.leagueLogo; toast('Saved ✔'); await load();
-    if (another) { F.home = F.away = null; const k = new Date($('kick').value); k.setHours(k.getHours() + 2); $('kick').value = toLocalInput(k.toISOString()); buildSrc([]); showTeams(); }
+    if (another) { F.home = F.away = null; const k = new Date($('kick').value); k.setHours(k.getHours() + 2); $('kick').value = toLocalInput(k.toISOString()); buildSrc([]); buildCom([]); showTeams(); }
     else $('matchDlg').close();
   } catch (e) { toast(e.message, true); }
 }
@@ -251,15 +256,9 @@ $('teams').onclick = e => {
   else if (confirm('Delete ' + t.name + '? Matches already using it keep the name.')) api('DELETE', '/api/admin/teams/' + t.id).then(() => { toast('Deleted'); load(); }).catch(err => toast(err.message, true));
 };
 
-/* ---------- commentary & settings ---------- */
-function comRow(c){ return '<div class="srow com" data-id="' + esc(c.id || '') + '" style="grid-template-columns:1fr 2fr"><input class="clabel" placeholder="e.g. English commentary" value="' + esc(c.label || '') + '"><input class="curl" placeholder="https://…/stream.mp3" value="' + esc(c.url || '') + '"></div>'; }
-$('addCom').onclick = () => $('coms').insertAdjacentHTML('beforeend', comRow({}));
-$('saveCom').onclick = async () => {
-  const list = [...document.querySelectorAll('.com')].map(r => ({ id: r.dataset.id, label: r.querySelector('.clabel').value, url: r.querySelector('.curl').value.trim() }));
-  try { await api('PUT', '/api/admin/commentary', { commentary: list }); toast('Commentary saved ✔'); load(); } catch (e) { toast(e.message, true); }
-};
+/* ---------- settings ---------- */
 $('saveName').onclick = async () => { try { await api('PUT', '/api/admin/settings', { leagueName: $('lname').value, siteName: $('sname').value }); toast('Saved ✔'); load(); } catch (e) { toast(e.message, true); } };
-function renderAll(){ $('lname').value = S.leagueName; $('sname').value = S.siteName || ''; $('coms').innerHTML = S.commentary.map(comRow).join(''); renderMatches(); renderTeams(); }
+function renderAll(){ $('lname').value = S.leagueName; $('sname').value = S.siteName || ''; renderMatches(); renderTeams(); }
 setInterval(() => { if (token && !document.querySelector('dialog[open]')) renderMatches(); }, 60000);
 if (token) start();
 </script>
