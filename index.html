@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Village League TV</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<style>
+  :root{--bg:#0b0e14;--card:#151922;--green:#00ff87;--cyan:#02efe6;--red:#ff3366;--text:#fff;--muted:#8e9aaf;--border:#232a3b}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Tahoma,Verdana,sans-serif}
+  body{background:var(--bg);color:var(--text);min-height:100vh}
+  .wrap{max-width:760px;margin:0 auto;padding:16px}
+  header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px;margin-bottom:18px}
+  .brand{font-size:1.25rem;font-weight:800;color:var(--green)}
+  .net{font-size:.75rem;color:var(--muted)} .net.off{color:var(--red)}
+  h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;color:var(--cyan);margin:18px 0 8px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer}
+  .card:active{transform:scale(.99)} .card.disabled{opacity:.55;cursor:default}
+  .teams{font-weight:700;font-size:1.02rem} .meta{font-size:.78rem;color:var(--muted);margin-top:3px}
+  .badge{font-size:.72rem;font-weight:800;padding:5px 9px;border-radius:7px;white-space:nowrap;background:#232a3b;color:var(--muted)}
+  .badge.live{background:var(--red);color:#fff;animation:pulse 1.5s infinite}
+  .badge.soon{background:#0d2b22;color:var(--green)}
+  @keyframes pulse{50%{opacity:.45}}
+  .empty{color:var(--muted);font-size:.9rem;padding:8px 2px}
+
+  .teamrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .team{display:flex;align-items:center;gap:8px}
+  .team img{width:26px;height:26px;object-fit:contain;border-radius:50%;background:#0d1017}
+  .logo-fallback{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-size:15px;background:#0d1017;border-radius:50%}
+  .vs{font-size:.8rem;color:var(--muted)}
+
+  html{-webkit-text-size-adjust:100%} body.noscroll{overflow:hidden}
+  .card{-webkit-tap-highlight-color:transparent;min-height:64px}
+  @media(max-width:480px){.wrap{padding:12px}.card{flex-wrap:wrap}.card .badge{margin-left:auto}}
+  #player{position:fixed;left:0;top:0;width:100%;height:100vh;height:100dvh;background:#000;display:none;flex-direction:column;z-index:50;overflow:hidden}
+  #player.open{display:flex}
+  .stage{position:relative;background:#000;width:100%;aspect-ratio:16/9;max-height:75vh;max-height:75dvh;flex:none;-webkit-tap-highlight-color:transparent}
+  .stage video,.stage iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;object-fit:contain}
+  .stage video.fill{object-fit:cover} .stage video.stretch{object-fit:fill}
+  iframe{display:none}
+  #overlayMsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:30px;color:#cfd6e6;font-size:1rem;pointer-events:none;background:#000a}
+  .ui{position:absolute;z-index:3;transition:opacity .25s}
+  .stage:not(.show) .ui{opacity:0;pointer-events:none}
+  .ptop{left:0;right:0;top:0;display:flex;align-items:center;gap:10px;padding:calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 24px calc(12px + env(safe-area-inset-left));background:linear-gradient(#000c,transparent)}
+  .ptitle{flex:1;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 3px #000}
+  #pstatus{font-size:.75rem;color:var(--green);text-shadow:0 1px 3px #000} #pstatus.warn{color:#ffc857}
+  .ptop button,.vbtns button{background:#000a;color:#fff;border:1px solid #ffffff33;border-radius:50%;min-width:42px;height:42px;font-size:1rem;display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
+  .vbtns{right:calc(10px + env(safe-area-inset-right));bottom:calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px}
+  #fitBtn{border-radius:21px;padding:0 13px;font-size:.8rem} #cogBtn{display:none} #player.lay #cogBtn{display:inline-flex}
+  /* static black panel with a coloured glow under the picture – put your own content in #pcustom */
+  .below{flex:1;min-height:0;overflow:auto;position:relative;padding:18px 14px calc(18px + env(safe-area-inset-bottom));background:radial-gradient(90% 90px at 50% 0,#00ff8738,transparent 75%),radial-gradient(60% 80px at 85% 0,#02efe62e,transparent 75%),linear-gradient(#0b0e14,#000);box-shadow:0 -10px 30px -12px #00ff8766}
+  #pinfo .teamrow{justify-content:center;font-weight:800;font-size:1.05rem} #pinfo .meta{text-align:center}
+  .pctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin-top:14px;font-size:.8rem;color:var(--muted)}
+  .pctl button,.pctl select{background:#232a3b;color:#fff;border:0;border-radius:8px;padding:9px 11px;font-size:.85rem}
+  @media(pointer:coarse){.pctl select{font-size:16px}}
+  .pctl input[type=range]{width:110px} .grp{display:flex;align-items:center;gap:6px}
+  /* landscape phone / fullscreen: picture takes the whole screen, settings float over it */
+  #player.lay .stage{aspect-ratio:auto;max-height:none;flex:1;height:auto}
+  #player.lay .below{display:none}
+  #player.lay.settings .below{display:block;position:absolute;left:10px;right:10px;bottom:64px;max-height:60%;z-index:6;border-radius:14px;border:1px solid var(--border);background:#0b0e14f2}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand" id="brand">⚽ Village League TV</div>
+    <div class="net" id="net">connecting…</div>
+  </header>
+  <div id="lists"></div>
+</div>
+
+<div id="player">
+  <div class="stage" id="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <iframe id="frame" allow="autoplay; fullscreen" allowfullscreen></iframe>
+    <div id="overlayMsg"></div>
+    <div class="ui ptop"><button id="backBtn" aria-label="Back">←</button><div class="ptitle" id="ptitle"></div><div id="pstatus"></div></div>
+    <div class="ui vbtns">
+      <button id="cogBtn" aria-label="Settings">⚙</button>
+      <button id="fitBtn" aria-label="Picture size"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14"/></svg><span id="fitLbl">Fit</span></button>
+      <button id="fsBtn" aria-label="Fullscreen"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></button>
+    </div>
+  </div>
+  <div class="below">
+    <div id="pinfo"></div>
+    <div id="pcustom"><!-- your own content / sponsor text can go here --></div>
+    <div class="pctl">
+      <div class="grp" id="srcGrp">Stream: <select id="srcSel"></select></div>
+      <div class="grp" id="qGrp">Quality: <select id="qSel"><option value="-1">auto</option></select></div>
+      <div class="grp">🎙 <select id="comSel"><option value="">Original sound</option></select></div>
+      <div class="grp" id="delayGrp" style="display:none">Sync delay <input type="range" id="delay" min="0" max="30" step="0.5" value="0"> <span id="delayVal">0s</span></div>
+      <div class="grp" id="volGrp" style="display:none">🔊 <input type="range" id="vol" min="0" max="1" step="0.05" value="1"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let USE_PROXY_FALLBACK = false; // the server turns this on only while few people are watching
+const CID = Math.random().toString(36).slice(2);
+let S = { rev: 0, leagueName: 'Village League TV', matches: [], commentary: [] };
+
+/* safe helpers so a missing field never crashes the page */
+const safeSources = m => Array.isArray(m && m.sources) ? m.sources : [];
+const safeStatus  = m => (m && ['live','upcoming','finished'].includes(m.status)) ? m.status : 'upcoming';
+
+/* ====================== MATCH LIST ====================== */
+function fmtTime(iso){
+  const d = new Date(iso || Date.now()), now = new Date();
+  const t = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  if (d.toDateString() === now.toDateString()) return 'Today ' + t;
+  const tm = new Date(now.getTime() + 864e5);
+  if (d.toDateString() === tm.toDateString()) return 'Tomorrow ' + t;
+  return d.toLocaleDateString([], {weekday:'short', day:'numeric', month:'short'}) + ' ' + t;
+}
+function countdown(iso){
+  const ms = new Date(iso || Date.now()) - Date.now();
+  if (ms <= 0) return 'Starting soon';
+  const m = Math.floor(ms/6e4), h = Math.floor(m/60), d = Math.floor(h/24);
+  if (d >= 1) return 'in ' + d + 'd ' + (h%24) + 'h';
+  if (h >= 1) return 'in ' + h + 'h ' + (m%60) + 'm';
+  return 'in ' + m + ' min';
+}
+function card(m){
+  const status = safeStatus(m), live = status === 'live', fin = status === 'finished';
+  const badge = live ? '<span class="badge live">● LIVE</span>'
+              : fin ? '<span class="badge">FT</span>'
+              : '<span class="badge soon">' + countdown(m.kickoff) + '</span>';
+  const logo = (u, name) => u
+    ? '<img src="' + esc(u) + '" alt="' + esc(name) + '" onerror="this.style.display=\'none\'">'
+    : '<span class="logo-fallback">⚽</span>';
+  return '<div class="card' + (fin ? ' disabled' : '') + '" data-id="' + esc(m.id) + '">' +
+    '<div class="teamrow">' +
+      '<div class="team">' + logo(m.homeLogo, m.home) + '<span>' + esc(m.home || 'Home') + '</span></div>' +
+      '<div class="vs">vs</div>' +
+      '<div class="team">' + logo(m.awayLogo, m.away) + '<span>' + esc(m.away || 'Away') + '</span></div>' +
+    '</div>' +
+    '<div class="meta">' + esc(m.league || 'Village League') + ' · ' + fmtTime(m.kickoff) + '</div>' + badge + '</div>';
+}
+function render(){
+  $('brand').textContent = '⚽ ' + (S.leagueName || 'Village League TV');
+  document.title = S.leagueName || 'Village League TV';
+  const matches = Array.isArray(S.matches) ? S.matches : [];
+  const byTime = (a,b) => new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
+  const live = matches.filter(m => safeStatus(m) === 'live').sort(byTime);
+  const up = matches.filter(m => safeStatus(m) === 'upcoming')
+    .sort((a,b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || byTime(a,b));
+  const fin = matches.filter(m => safeStatus(m) === 'finished').sort((a,b) => byTime(b,a)).slice(0,10);
+  let h = '';
+  h += '<h2>Live now</h2>' + (live.length ? live.map(card).join('') : '<div class="empty">No live match right now.</div>');
+  h += '<h2>Pinned &amp; upcoming</h2>' + (up.length ? up.map(card).join('') : '<div class="empty">No upcoming matches yet.</div>');
+  if (fin.length) h += '<h2>Finished</h2>' + fin.map(card).join('');
+  $('lists').innerHTML = h;
+  fillCommentary();
+}
+$('lists').addEventListener('click', e => {
+  const c = e.target.closest('.card'); if (!c || c.classList.contains('disabled')) return;
+  openMatch(c.dataset.id);
+});
+
+/* ====================== STATE POLLING ====================== */
+async function poll(){
+  try {
+    const r = await fetch('/api/state?c=' + CID, {cache:'no-store'});
+    const j = await r.json();
+    USE_PROXY_FALLBACK = j.proxyOk === true;
+    if (!USE_PROXY_FALLBACK && P.proxy && P.match) { P.proxy = false; startSource(); } /* crowd arrived: go direct */
+    $('net').textContent = 'online'; $('net').className = 'net';
+    if (j.rev !== S.rev) { S = j; render(); onStateChanged(); }
+  } catch {
+    $('net').textContent = 'offline – retrying'; $('net').className = 'net off';
+  }
+}
+setInterval(poll, 4000);
+setInterval(() => { if (!P.match) render(); }, 30000);
+poll();
+
+/* ====================== PLAYER ====================== */
+const video = $('video'), frame = $('frame');
+const P = { match:null, idx:0, hls:null, sig:'', fails:0, timer:null, lastT:-1, lastMove:0, mode:'fit', full:false, proxy:false };
+const srcUrl = s => P.proxy ? '/proxy?u=' + encodeURIComponent(s.url) : s.url;
+
+function setStatus(t, warn){ $('pstatus').textContent = t || ''; $('pstatus').className = warn ? 'warn' : ''; }
+function overlay(t){ $('overlayMsg').style.display = t ? 'flex' : 'none'; $('overlayMsg').textContent = t || ''; }
+
+let ctlTimer = null;
+const stage = $('stage'), playerEl = $('player');
+function showControls(){
+  stage.classList.add('show'); clearTimeout(ctlTimer);
+  ctlTimer = setTimeout(() => { if (!playerEl.classList.contains('settings')) stage.classList.remove('show'); }, 3500);
+}
+function hideControlsNow(){ clearTimeout(ctlTimer); stage.classList.remove('show'); }
+const wideMQ = window.matchMedia('(orientation:landscape) and (max-height:600px)');
+function syncLay(){
+  playerEl.classList.toggle('lay', P.full || wideMQ.matches);
+  if (!playerEl.classList.contains('lay')) playerEl.classList.remove('settings');
+}
+function applyMode(){
+  video.className = P.mode === 'fit' ? '' : P.mode;
+  $('fitLbl').textContent = {fit:'Fit', fill:'Fill', stretch:'Stretch'}[P.mode];
+}
+function fillInfo(m){
+  const lg = (u, n) => u ? '<img src="' + esc(u) + '" alt="' + esc(n) + '" onerror="this.style.display=\'none\'">' : '<span class="logo-fallback">⚽</span>';
+  $('pinfo').innerHTML = '<div class="teamrow"><div class="team">' + lg(m.homeLogo, m.home) + '<span>' + esc(m.home || 'Home') + '</span></div><div class="vs">vs</div><div class="team">' + lg(m.awayLogo, m.away) + '<span>' + esc(m.away || 'Away') + '</span></div></div><div class="meta">' + esc(m.league || 'Village League') + ' · ' + fmtTime(m.kickoff) + '</div>';
+}
+function setFull(on){
+  P.full = on;
+  if (on) {
+    const req = playerEl.requestFullscreen || playerEl.webkitRequestFullscreen; /* iPhone has none → our own full-screen layout is used */
+    if (req) { try { const r = req.call(playerEl); if (r && r.catch) r.catch(() => {}); } catch {} }
+    try { screen.orientation.lock('landscape').catch(() => {}); } catch {}
+  } else {
+    try { if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch {}
+    try { screen.orientation.unlock(); } catch {}
+  }
+  syncLay(); showControls();
+}
+['fullscreenchange', 'webkitfullscreenchange'].forEach(ev => document.addEventListener(ev, () => {
+  if (P.full && !(document.fullscreenElement || document.webkitFullscreenElement) && playerEl.dataset.realfs) { P.full = false; syncLay(); }
+  playerEl.dataset.realfs = (document.fullscreenElement || document.webkitFullscreenElement) ? '1' : '';
+}));
+['resize', 'orientationchange'].forEach(ev => window.addEventListener(ev, syncLay));
+if (wideMQ.addEventListener) wideMQ.addEventListener('change', syncLay);
+
+function openMatch(id){
+  const m = (S.matches || []).find(x => x.id === id); if (!m) return;
+  P.match = m; P.idx = 0; P.fails = 0; P.proxy = false; P.sig = JSON.stringify(safeSources(m));
+  $('ptitle').textContent = (m.home || 'Home') + ' vs ' + (m.away || 'Away');
+  $('player').classList.add('open');
+  buildSourceSelect();
+  buildQualitySelect([]);
+  if (!comUrl) video.muted = false;
+  P.mode = 'fit'; applyMode(); P.full = false; syncLay(); fillInfo(m); document.body.classList.add('noscroll');
+  startSource();
+  showControls();
+}
+function closePlayer(){
+  hideControlsNow();
+  stopSource(); stopCommentary();
+  P.match = null; $('player').classList.remove('open');
+  setFull(false); playerEl.classList.remove('settings'); document.body.classList.remove('noscroll'); hideControlsNow();
+  render();
+}
+$('backBtn').onclick = closePlayer;
+
+stage.addEventListener('click', e => {
+  if (e.target.closest('.ui button')) return;
+  if (playerEl.classList.contains('settings')) { playerEl.classList.remove('settings'); showControls(); return; }
+  stage.classList.contains('show') ? hideControlsNow() : showControls();
+});
+
+function buildSourceSelect(){
+  const sources = safeSources(P.match), sel = $('srcSel');
+  sel.innerHTML = sources.map((s,i) => '<option value="'+i+'">' + esc(s.label || ('Link ' + (i+1))) + '</option>').join('');
+  sel.value = P.idx;
+  $('srcGrp').style.display = sources.length > 1 ? 'flex' : 'none';
+}
+$('srcSel').onchange = e => { P.idx = +e.target.value; P.fails = 0; P.proxy = false; startSource(); };
+
+function buildQualitySelect(levels){
+  const sel = $('qSel');
+  if (!levels || !levels.length) { $('qGrp').style.display = 'none'; sel.innerHTML = '<option value="-1">auto</option>'; return; }
+  $('qGrp').style.display = 'flex';
+  sel.innerHTML = '<option value="-1">auto</option>' + levels.map((l,i) =>
+    '<option value="' + i + '">' + (l.height ? l.height + 'p' : Math.round(l.bitrate/1000) + 'k') + '</option>').join('');
+  sel.value = '-1';
+}
+$('qSel').onchange = e => {
+  if (!P.hls) return;
+  const v = +e.target.value;
+  P.hls.currentLevel = v;        // -1 = auto
+  P.hls.autoLevelEnabled = v === -1;
+  if (v === -1) { P.hls.nextLevel = -1; P.hls.loadLevel = -1; }
+};
+
+function stopSource(){
+  clearTimeout(P.timer);
+  if (P.hls) { try { P.hls.destroy(); } catch {} P.hls = null; }
+  video.removeAttribute('src'); video.load();
+  frame.src = 'about:blank'; frame.style.display = 'none'; video.style.display = 'block';
+  buildQualitySelect([]);
+}
+
+function startSource(){
+  if (!P.match) return;
+  stopSource();
+  const m = P.match, sources = safeSources(m), s = sources[P.idx];
+  const status = safeStatus(m);
+  if (status === 'finished') { overlay('This match has finished.'); setStatus(''); return; }
+  if (!s || !s.url) {
+    overlay(status === 'live' ? 'Waiting for the stream link… it will start by itself.'
+      : 'Starts ' + fmtTime(m.kickoff) + '. This screen will start automatically when the organiser goes live.');
+    setStatus('waiting', true); return;
+  }
+  overlay('Connecting…'); setStatus('connecting…', true);
+  P.lastT = -1; P.lastMove = Date.now();
+
+  if (s.type === 'embed') {
+    video.style.display = 'none'; frame.style.display = 'block'; frame.src = s.url;
+    overlay(''); setStatus('live (embedded)'); return;
+  }
+
+  if (window.Hls && Hls.isSupported()) {
+    const hls = P.hls = new Hls({
+      /* ---- the important settings for slow internet ---- */
+      lowLatencyMode: false,
+      enableWorker: true,
+      startLevel: -1,                 // let ABR pick the starting quality
+      abrEwmaDefaultEstimate: 8000000, // assume a good connection: start at high quality, drop only if it struggles
+      abrBandWidthFactor: 0.8,        // drop quality early when the connection weakens
+      abrBandWidthUpFactor: 0.7,      // climb back to high quality once it is stable
+      liveSyncDurationCount: 3,       // stay as close to live as HLS allows
+      maxStarvationDelay: 4,          // drop quality after 4s of buffer starvation
+      maxLoadingDelay: 4,             // drop quality if loading takes too long
+      maxBufferLength: 20,            // don't buffer 30s of video — 20s is plenty
+      maxMaxBufferLength: 30,
+      backBufferLength: 10,
+      manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 4, fragLoadingMaxRetry: 6,
+      fragLoadingTimeOut: 20000       // give slow connections 20s per fragment
+    });
+    hls.loadSource(srcUrl(s)); hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+      buildQualitySelect(hls.levels || []);
+      if ((hls.levels || []).length === 1) setStatus('● live · this stream has only one quality', true);
+      video.play().catch(()=>{});
+    });
+    /* keep the quality menu in sync with what ABR is doing */
+    hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+      const sel = $('qSel');
+      if (sel && sel.value === '-1' && hls.levels[data.level]) {
+        const h = hls.levels[data.level].height;
+        setStatus('● live · auto' + (h ? ' ' + h + 'p' : ''));
+      }
+    });
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if (!d.fatal) return;
+      const code = d.response && d.response.code;
+      console.warn('HLS fatal error', d.details, code, d);
+      /* no HTTP code = the browser blocked the request (CORS) → retry through our server */
+      if (USE_PROXY_FALLBACK && d.type === Hls.ErrorTypes.NETWORK_ERROR && !P.proxy && !code && navigator.onLine) {
+        P.proxy = true; setStatus('retrying via server…', true); startSource(); return;
+      }
+      const codecs = (hls.levels || []).map(l => (l.videoCodec || '?') + ' + ' + (l.audioCodec || '?')).join(' | ');
+      if (codecs) console.warn('Stream codecs:', codecs);
+      if (d.type === Hls.ErrorTypes.MEDIA_ERROR && P.fails < 2) {
+        if (d.details === 'bufferAppendError' && P.fails === 1) hls.swapAudioCodec();
+        P.fails++; hls.recoverMediaError(); return;
+      }
+      if (d.type === Hls.ErrorTypes.NETWORK_ERROR && P.fails < 2 && !code) { P.fails++; hls.startLoad(); return; }
+      const hint = code === 403 || code === 401 ? 'Stream link rejected (' + code + ') – it has probably expired. Waiting for the organiser to paste a new link…'
+                 : d.details === 'bufferAppendError' ? 'This browser cannot decode the stream (' + (codecs || 'unknown format') + '). Try Chrome/Edge on another device, or ask the encoder to use H.264 + AAC.'
+                 : code === 404 ? 'Stream not found (404) – the broadcast may not have started yet. Retrying…' : '';
+      failAndRetry('Connection lost (' + d.details + (code ? ' ' + code : '') + ')', hint);
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = srcUrl(s); video.play().catch(()=>{});
+    video.onerror = () => { if (USE_PROXY_FALLBACK && !P.proxy && navigator.onLine) { P.proxy = true; startSource(); } else failAndRetry('Connection lost'); };
+  } else { overlay('This browser cannot play HLS streams.'); }
+}
+
+function failAndRetry(why, hint){
+  if (!P.match) return;
+  P.fails++;
+  const sources = safeSources(P.match), n = sources.length;
+  if (P.fails % 3 === 0 && n > 1) { P.idx = (P.idx + 1) % n; P.proxy = false; $('srcSel').value = P.idx; }
+  const wait = Math.min(1000 * Math.pow(1.7, P.fails), 10000);
+  setStatus(why + ' – reconnecting…', true);
+  overlay(hint || 'Reconnecting…');
+  clearTimeout(P.timer); P.timer = setTimeout(startSource, wait);
+}
+
+video.addEventListener('playing', () => { P.fails = 0; overlay(''); setStatus('● live'); });
+video.addEventListener('waiting', () => setStatus('buffering…', true));
+
+/* watchdog — only kicks in if the video is REALLY stuck (20s of no progress) */
+setInterval(() => {
+  if (!P.match) return;
+  const sources = safeSources(P.match), s = sources[P.idx];
+  if (!s || s.type === 'embed') return;
+  if (video.currentTime > P.lastT + 0.05) { P.lastT = video.currentTime; P.lastMove = Date.now(); }
+  else if (Date.now() - P.lastMove > 20000) { P.lastMove = Date.now(); failAndRetry('Stream stalled'); }
+  if (video.paused && !video.ended && video.readyState > 2) video.play().catch(()=>{});
+  /* stay on the live edge: if buffering made us fall behind, jump forward to live */
+  if (P.hls && P.hls.liveSyncPosition && !video.paused && video.currentTime < P.hls.liveSyncPosition - 8) {
+    video.currentTime = P.hls.liveSyncPosition;
+  }
+}, 4000);
+
+window.addEventListener('online', () => { if (P.match) { P.fails = 0; P.proxy = false; startSource(); } poll(); });
+
+function onStateChanged(){
+  if (!P.match) return;
+  const m = (S.matches || []).find(x => x.id === P.match.id);
+  if (!m) { closePlayer(); return; }
+  const sig = JSON.stringify(safeSources(m)), statusChanged = safeStatus(m) !== safeStatus(P.match);
+  P.match = m; fillInfo(m);
+  if (sig !== P.sig) {
+    P.sig = sig; P.idx = 0; P.fails = 0; P.proxy = false; buildSourceSelect();
+    setStatus('new link – switching…', true); startSource();
+  } else if (statusChanged) { startSource(); }
+}
+
+$('fitBtn').onclick = () => { P.mode = {fit:'fill', fill:'stretch', stretch:'fit'}[P.mode]; applyMode(); showControls(); };
+$('fsBtn').onclick = () => setFull(!P.full);
+$('cogBtn').onclick = () => { playerEl.classList.toggle('settings'); showControls(); };
+
+/* ====================== COMMENTARY ====================== */
+let aud = null, actx = null, delayNode = null, gainNode = null, comTimer = null, comUrl = '', delayOK = false;
+
+function fillCommentary(){
+  const sel = $('comSel'); if (!sel) return;
+  const cur = sel.value;
+  const list = Array.isArray(S.commentary) ? S.commentary : [];
+  sel.innerHTML = '<option value="">Original sound</option>' + list.map(c => '<option value="'+esc(c.id)+'">' + esc(c.label) + '</option>').join('');
+  sel.value = list.some(c => c.id === cur) ? cur : '';
+}
+
+$('comSel').onchange = e => {
+  const c = (S.commentary || []).find(x => x.id === e.target.value);
+  c ? startCommentary(c.url) : stopCommentary();
+};
+
+function startCommentary(url, noCors){
+  stopAudioOnly(); comUrl = url;
+  video.muted = true;
+  const a = aud = new Audio(); a.preload = 'none';
+  delayOK = false;
+  if (!noCors) {
+    try {
+      a.crossOrigin = 'anonymous';
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      const srcN = actx.createMediaElementSource(a);
+      delayNode = actx.createDelay(60); gainNode = actx.createGain();
+      delayNode.delayTime.value = +$('delay').value; gainNode.gain.value = +$('vol').value;
+      srcN.connect(delayNode); delayNode.connect(gainNode); gainNode.connect(actx.destination);
+      delayOK = true; actx.resume();
+    } catch { delayOK = false; }
+  }
+  a.onerror = () => {
+    if (!noCors && aud === a) { startCommentary(url, true); return; }
+    scheduleCommentaryRetry();
+  };
+  a.onstalled = a.onended = () => scheduleCommentaryRetry();
+  a.src = url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+  a.play().catch(()=>{});
+  $('delayGrp').style.display = delayOK ? 'flex' : 'none';
+  $('volGrp').style.display = 'flex';
+  if (!delayOK) { a.volume = +$('vol').value; }
+}
+function scheduleCommentaryRetry(){
+  clearTimeout(comTimer);
+  if (!comUrl) return;
+  const url = comUrl;
+  comTimer = setTimeout(() => { if (comUrl === url) startCommentary(url, !delayOK); }, 3000);
+}
+function stopAudioOnly(){
+  clearTimeout(comTimer);
+  if (aud) { aud.onerror = aud.onstalled = aud.onended = null; try { aud.pause(); aud.removeAttribute('src'); aud.load(); } catch {} aud = null; }
+  delayNode = gainNode = null;
+}
+function stopCommentary(){
+  comUrl = ''; stopAudioOnly(); video.muted = false;
+  $('comSel').value = ''; $('delayGrp').style.display = 'none'; $('volGrp').style.display = 'none';
+}
+$('delay').oninput = e => { $('delayVal').textContent = e.target.value + 's'; if (delayNode) delayNode.delayTime.value = +e.target.value; };
+$('vol').oninput = e => { if (gainNode) gainNode.gain.value = +e.target.value; else if (aud) aud.volume = +e.target.value; };
+</script>
+</body>
+</html>
