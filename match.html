@@ -15,7 +15,11 @@
   .back { text-decoration:none; font-weight:600; padding:6px 0; }
   .top .brand { font-size:1.1rem; }
 
-  .player { position:relative; width:100%; aspect-ratio:16/9; background:#000; }
+  .player { position:relative; width:100%; height:min(56.25vw, calc(100dvh - 72px)); background:#000; }
+  .player:fullscreen { width:100vw; height:100vh; }
+  .player:-webkit-full-screen { width:100vw; height:100vh; }
+  .tapfs { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:6; background:rgba(0,0,0,.72); color:#fff;
+    border:2px solid var(--brand); border-radius:28px; padding:12px 22px; font-size:1.05rem; font-weight:600; }
   .player video, .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; }
   .player [hidden] { display:none; }
   .status { position:absolute; inset:0; display:grid; place-items:center; color:#cfd5e3; font-size:1.1rem; pointer-events:none; text-align:center; padding:0 20px; }
@@ -40,12 +44,12 @@
 
   body.fs .top, body.fs .info, body.fs .more { display:none; }
   body.fs { overflow:hidden; }
-  body.fs .player { position:fixed; inset:0; width:100vw; height:100dvh; aspect-ratio:auto; z-index:9999; }
+  body.fs .player { position:fixed; inset:0; width:100vw; height:100dvh; z-index:9999; }
   body.fs .tools, body.fs .unlock { top:calc(env(safe-area-inset-top,0px) + 8px); }
   @media (orientation:landscape) and (max-height:500px) {
     .top, .info, .more { display:none; }
     body { overflow:hidden; }
-    .player { position:fixed; inset:0; width:100vw; height:100dvh; aspect-ratio:auto; z-index:9999; }
+    .player { position:fixed; inset:0; width:100vw; height:100dvh; z-index:9999; }
     .tools, .unlock { top:calc(env(safe-area-inset-top,0px) + 8px); }
   }
 </style>
@@ -57,6 +61,7 @@
   <video id="video" playsinline webkit-playsinline controls autoplay></video>
   <iframe id="frame" hidden allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
   <div class="status" id="status">Connecting…</div>
+  <button class="tapfs" id="tapFs" type="button" hidden>Tap for full screen</button>
   <div class="hint" id="hint"></div>
   <div class="shield" id="shield" hidden></div>
   <div class="tools" id="tools">
@@ -99,7 +104,13 @@ function play(viaProxy) {
   frame.hidden = true; video.hidden = false;
   const url = viaProxy ? '/proxy?u=' + encodeURIComponent(src.url) : src.url;
   if (useHlsJs()) {
-    hls = new Hls({ lowLatencyMode: true });
+    hls = new Hls({
+      lowLatencyMode: true,
+      abrEwmaDefaultEstimate: 25e6,            // start as if the connection is fast, so it opens in the highest quality
+      abrEwmaFastLive: 2, abrEwmaSlowLive: 6,  // notice a slowing connection sooner
+      abrBandWidthFactor: 0.8,                 // step down a little early, before the picture can freeze
+      maxBufferLength: 12, backBufferLength: 10, liveSyncDurationCount: 3
+    });
     hls.loadSource(url); hls.attachMedia(video);
     hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
     hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) retry(viaProxy); });
@@ -214,21 +225,63 @@ function setLock(on) {
 }
 $('lockBtn').onclick = () => setLock(true); $('unlockBtn').onclick = () => setLock(false);
 
-/* ---------- full screen ---------- */
-let fake = false;
-function setFake(on) { fake = on; document.body.classList.toggle('fs', on); }
+/* ---------- full screen, chosen per device ---------- */
+const ua = navigator.userAgent;
+const isIPhone = /iPhone|iPod/.test(ua);
+const isIPad = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = /Android/.test(ua);
+const isPhone = isIPhone || (isAndroid && Math.min(screen.width, screen.height) < 600);
+const device = isIPhone ? 'iphone' : isIPad ? 'ipad' : isAndroid ? 'android' : 'desktop';
+const land = matchMedia('(orientation: landscape)');
+let fake = false, auto = false, nativeFs = false;
+const inFs = () => !!(document.fullscreenElement || document.webkitFullscreenElement) || fake || nativeFs;
+function syncPrompt() { $('tapFs').hidden = !(isPhone && land.matches && !inFs() && !video.hidden); }
+function setFake(on) { fake = on; document.body.classList.toggle('fs', on); syncPrompt(); }
+
 function enterFs() {
-  // our own full screen keeps the Fit / Fill / Stretch buttons on screen (iPhone's native player would hide them)
-  if (player.requestFullscreen) player.requestFullscreen().catch(() => setFake(true));
-  else setFake(true);
+  if (device === 'iphone') {            // iPhone: Apple's own full-screen player (no browser bars, like other apps)
+    if (!video.hidden && video.webkitEnterFullscreen) { try { video.webkitEnterFullscreen(); return; } catch {} }
+    return setFake(true);
+  }
+  const req = player.requestFullscreen || player.webkitRequestFullscreen;   // Android, iPad, laptops: real full screen, our buttons stay
+  if (req) {
+    Promise.resolve(req.call(player)).then(() => {
+      if (device === 'android' && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+    }).catch(() => setFake(true));
+    return;
+  }
+  if (!video.hidden && video.webkitEnterFullscreen) { try { video.webkitEnterFullscreen(); return; } catch {} }
+  setFake(true);
 }
-function exitFs() { if (document.fullscreenElement) document.exitFullscreen(); setFake(false); }
-$('fsBtn').onclick = () => (document.fullscreenElement || fake) ? exitFs() : enterFs();
+function exitFs() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (document.webkitFullscreenElement) document.webkitExitFullscreen();
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch {}
+  auto = false; setFake(false);
+}
+$('fsBtn').onclick = () => inFs() ? exitFs() : enterFs();
+$('tapFs').onclick = enterFs;
 video.addEventListener('dblclick', enterFs);
-matchMedia('(orientation: landscape)').addEventListener('change', e => {
-  if (e.matches && !document.fullscreenElement && player.requestFullscreen) player.requestFullscreen().catch(() => {});
-  if (!e.matches) exitFs();
+
+video.addEventListener('webkitbeginfullscreen', () => { nativeFs = true; syncPrompt(); });
+video.addEventListener('webkitendfullscreen', () => { nativeFs = false; video.play().catch(() => {}); syncPrompt(); });
+document.addEventListener('fullscreenchange', syncPrompt);
+['loadstart', 'playing'].forEach(ev => video.addEventListener(ev, syncPrompt));
+land.addEventListener('change', e => {
+  if (!e.matches && isPhone && (fake || document.fullscreenElement)) exitFs();   // turned back upright
+  syncPrompt();
 });
+syncPrompt();
+
+// Laptops: pressing F11 makes the picture fill the whole screen
+const dm = matchMedia('(display-mode: fullscreen)');
+function checkF11() {
+  if (device !== 'desktop') return;
+  const f11 = dm.matches || (innerHeight >= screen.height - 1 && innerWidth >= screen.width - 1);
+  if (f11 && !document.fullscreenElement && !fake) { auto = true; setFake(true); }
+  else if (!f11 && auto) { auto = false; setFake(false); }
+}
+addEventListener('resize', checkF11); dm.addEventListener('change', checkF11); checkF11();
 </script>
 </body>
 </html>
