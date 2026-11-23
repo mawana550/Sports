@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rock Videos</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05070c">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="/common.css">
+<style>
+  .top { display:flex; align-items:center; justify-content:space-between; padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 10px; }
+  .back { text-decoration:none; font-weight:600; padding:6px 0; }
+  .top .brand { font-size:1.1rem; }
+
+  .player { position:relative; width:100%; height:min(56.25vw, calc(100dvh - 72px)); background:#000; }
+  .player:fullscreen { width:100vw; height:100vh; }
+  .player:-webkit-full-screen { width:100vw; height:100vh; }
+  .unmute { position:absolute; left:10px; top:8px; z-index:7; background:rgba(0,0,0,.72); color:#fff; border:1px solid #3a3f4d;
+    border-radius:20px; padding:8px 14px; font-size:.95rem; }
+  .tapfs { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:6; background:rgba(0,0,0,.72); color:#fff;
+    border:2px solid var(--brand); border-radius:28px; padding:12px 22px; font-size:1.05rem; font-weight:600; }
+  .player video, .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:#000; }
+  .player [hidden] { display:none; }
+  .status { position:absolute; inset:0; display:grid; place-items:center; color:#cfd5e3; font-size:1.1rem; pointer-events:none; text-align:center; padding:0 20px; }
+  .tools { position:absolute; top:8px; right:8px; z-index:6; display:flex; gap:8px; }
+  .tools button, .unlock { width:40px; height:40px; border-radius:50%; border:1px solid #3a3f4d; background:rgba(28,28,30,.78);
+    color:#fff; display:grid; place-items:center; padding:0; font-size:1rem; }
+  .shield { position:absolute; inset:0; z-index:5; }
+  .unlock { position:absolute; top:8px; right:8px; z-index:7; }
+  .hint { position:absolute; left:50%; top:14px; transform:translateX(-50%); z-index:7; background:rgba(0,0,0,.7); color:#fff;
+    padding:6px 12px; border-radius:16px; font-size:.9rem; pointer-events:none; opacity:0; transition:opacity .2s; }
+  .hint.on { opacity:1; }
+
+  .info { padding:16px 14px 4px; }
+  .head { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:8px; }
+  .meta { margin-top:10px; text-align:center; color:var(--muted); font-size:.95rem; display:flex; justify-content:center; align-items:center; gap:8px; }
+  .sound { margin:14px 0 4px; display:flex; flex-direction:column; gap:10px; }
+  .sound select { background:var(--panel); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; padding:10px 12px; font-size:1rem; width:100%; }
+  .delay { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:.9rem; }
+  .delay input { flex:1; accent-color:var(--brand); }
+  .more h3 { margin:24px 14px 0; font-size:1.05rem; }
+
+  body.fs .top, body.fs .info, body.fs .more { display:none; }
+  body.fs { overflow:hidden; }
+  body.fs .player { position:fixed; inset:0; width:100vw; height:100dvh; z-index:9999; }
+  body.fs .tools, body.fs .unlock { top:calc(env(safe-area-inset-top,0px) + 8px); }
+  @media (orientation:landscape) and (max-height:500px) {
+    .top, .info, .more { display:none; }
+    body { overflow:hidden; }
+    .player { position:fixed; inset:0; width:100vw; height:100dvh; z-index:9999; }
+    .tools, .unlock { top:calc(env(safe-area-inset-top,0px) + 8px); }
+  }
+</style>
+</head>
+<body>
+<div class="top"><a class="back" href="/">← Matches</a><span class="brand" id="brand">Rock Videos</span></div>
+
+<div class="player" id="player">
+  <video id="video" playsinline webkit-playsinline controls autoplay preload="auto"></video>
+  <iframe id="frame" hidden allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
+  <div class="status" id="status" style="display:none"></div>
+  <button class="unmute" id="unmute" type="button" hidden>🔈 Tap to unmute</button>
+  <button class="tapfs" id="tapFs" type="button" hidden>Tap for full screen</button>
+  <div class="hint" id="hint"></div>
+  <div class="shield" id="shield" hidden></div>
+  <div class="tools" id="tools">
+    <button id="aspBtn" type="button" aria-label="Fit, fill or stretch the picture"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg></button>
+    <button id="pipBtn" type="button" aria-label="Picture in picture"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1"/></svg></button>
+    <button id="lockBtn" type="button" aria-label="Lock the screen"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+    <button id="fsBtn" type="button" aria-label="Full screen"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5"/></svg></button>
+  </div>
+  <button class="unlock" id="unlockBtn" type="button" hidden aria-label="Unlock"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+</div>
+
+<div class="info" id="info"></div>
+<div class="more" id="more"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script src="/common.js"></script>
+<script>
+const id = new URLSearchParams(location.search).get('id');
+const video = $('video'), frame = $('frame'), player = $('player');
+const isApple = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let nativeFallback = false;
+try { nativeFallback = sessionStorage.vnative === '1'; } catch {}
+// hls.js everywhere it works (laptops, Androids and iPhones on iOS 17.1+), so every device starts and keeps up with the live source the same way;
+// older iPhones, or a phone where hls.js fails, use Apple's built-in player
+const useHlsJs = () => window.Hls && Hls.isSupported() && !nativeFallback;
+let S = null, M = null, rev = -1, idx = 0, fails = 0, hls = null, timer = null, curKey = '', stuckAt = 0, lastT = -1;
+
+let audioNeedsTap = false, defaultDone = false, shown = false, soonT = null, autoMuted = false, curProxy = false;
+function setStatus(t) { clearTimeout(soonT); $('status').textContent = t; $('status').style.display = t ? 'grid' : 'none'; }
+function setSoon(t, ms) { clearTimeout(soonT); $('status').style.display = 'none'; soonT = setTimeout(() => setStatus(t), ms); }   // stay quiet unless it takes long
+const hostOf = u => { try { return new URL(u).host; } catch { return ''; } };
+const proxied = () => { try { return JSON.parse(sessionStorage.vproxy || '[]'); } catch { return []; } };
+function tryPlay() {            // start by itself; if the browser insists on a tap for sound, play muted with an unmute button
+  const p = video.play();
+  if (p && p.catch) p.catch(() => { if (video.muted) return; video.muted = true; autoMuted = true; $('unmute').hidden = false; video.play().catch(() => {}); });
+}
+$('unmute').onclick = () => {
+  if (audioNeedsTap && audio) { audioNeedsTap = false; if (ctx) ctx.resume(); audio.play().catch(() => {}); }
+  else { video.muted = false; autoMuted = false; }
+  $('unmute').hidden = true; video.play().catch(() => {});
+};
+video.addEventListener('volumechange', () => { if (!video.muted) { autoMuted = false; $('unmute').hidden = true; } });
+
+/* ---------- video: direct link first, then through the server proxy, backup links, self-healing ---------- */
+function stopVideo() {
+  clearTimeout(timer);
+  if (hls) { hls.destroy(); hls = null; }
+  video.removeAttribute('src'); video.load();
+  frame.removeAttribute('src');
+}
+function play(viaProxy) {
+  stopVideo();
+  const src = M && M.sources[idx];
+  curKey = src ? src.url : '';
+  if (!src) { setStatus(M && M.status === 'live' ? 'Stream starting soon…' : 'The stream is not available yet'); return; }
+  setSoon('Connecting…', 6000);
+  if (src.type === 'embed') { video.hidden = true; frame.hidden = false; frame.src = src.url; setStatus(''); return; }
+  frame.hidden = true; video.hidden = false;
+  if (!viaProxy && S && S.proxyOk && proxied().includes(hostOf(src.url))) viaProxy = true;   // this source needed the server before: go straight there
+  curProxy = viaProxy;
+  const url = viaProxy ? '/proxy?u=' + encodeURIComponent(src.url) : src.url;
+  if (useHlsJs()) {
+    if (isApple) video.disableRemotePlayback = true;   // needed for hls.js on iPhone
+    hls = new Hls({
+      lowLatencyMode: true,
+      abrEwmaDefaultEstimate: 3e6,             // open in a medium quality so the first picture appears fast, then climb
+      abrBandWidthUpFactor: 0.75,              // climb to higher quality quickly once the speed is measured
+      abrEwmaFastLive: 2, abrEwmaSlowLive: 6,  // notice a slowing connection sooner
+      abrBandWidthFactor: 0.8,                 // step down a little early, before the picture can freeze
+      startFragPrefetch: true,                 // fetch the first video piece while the playlist is still loading
+      manifestLoadingMaxRetry: 1, manifestLoadingRetryDelay: 300, levelLoadingMaxRetry: 1, levelLoadingRetryDelay: 300,
+      liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 5, maxLiveSyncPlaybackRate: 1.1,   // stay close to the live source
+      maxBufferLength: 12, backBufferLength: 10
+    });
+    hls.loadSource(url); hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, tryPlay);
+    hls.on(Hls.Events.ERROR, (e, d) => {
+      if (!d.fatal) return;
+      const proxyTried = viaProxy || !(S && S.proxyOk);
+      if (isApple && !nativeFallback && proxyTried) {   // hls.js did not work on this iPhone: use Apple's player (and remember it)
+        nativeFallback = true; try { sessionStorage.vnative = '1'; } catch {} return play(false);
+      }
+      retry(viaProxy);
+    });
+  } else {
+    video.disableRemotePlayback = false;
+    video.src = url; tryPlay();
+  }
+}
+function retry(wasProxy) {
+  clearTimeout(timer);
+  if (!wasProxy && S && S.proxyOk) return play(true);       // blocked directly? try via the server
+  fails++;
+  if (fails >= 3 && M.sources.length > 1) { idx = (idx + 1) % M.sources.length; fails = 0; }   // next backup link
+  setSoon('Reconnecting…', 4000);
+  timer = setTimeout(() => play(false), Math.min(1000 * 2 ** fails, 8000));
+}
+video.addEventListener('error', () => { if (video.getAttribute('src')) retry(video.src.includes('/proxy?u=')); });
+video.addEventListener('playing', () => {
+  fails = 0; setStatus('');
+  if (curProxy && curKey) { const h = hostOf(curKey), l = proxied(); if (h && !l.includes(h)) try { sessionStorage.vproxy = JSON.stringify(l.concat(h)); } catch {} }
+});
+setInterval(() => {                                          // restart if the picture freezes for 12 seconds
+  if (!curKey || video.hidden || video.paused || video.readyState < 2) { stuckAt = 0; return; }
+  if (video.currentTime !== lastT) { lastT = video.currentTime; stuckAt = 0; return; }
+  stuckAt += 3;
+  if (stuckAt >= 12) { stuckAt = 0; retry(video.src.includes('/proxy?u=')); }
+}, 3000);
+window.addEventListener('online', () => { fails = 0; play(false); });
+
+/* ---------- commentary (replaces the video sound, with a sync delay) ---------- */
+let audio = null, ahls = null, ctx = null, dnode = null;
+function stopAudio() { if (ahls) { ahls.destroy(); ahls = null; } if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); audio = null; } }
+function startAudio(url, cors) {
+  audio = new Audio();
+  if (cors) audio.crossOrigin = 'anonymous';
+  const fallback = () => { if (cors) { stopAudio(); startAudio(url, false); } };   // station blocks CORS: play without the delay
+  audio.addEventListener('error', fallback);
+  if (/\.m3u8(\?|$)/i.test(url) && useHlsJs() && !isApple) {
+    ahls = new Hls(); ahls.loadSource(url); ahls.attachMedia(audio);
+    ahls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) fallback(); });
+  } else audio.src = url;
+  $('delayBox') && ($('delayBox').hidden = true);
+  if (cors) try {
+    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+    dnode = ctx.createDelay(20); dnode.delayTime.value = +$('delay').value;
+    ctx.createMediaElementSource(audio).connect(dnode); dnode.connect(ctx.destination);
+    ctx.resume(); $('delayBox').hidden = false;
+  } catch {}
+  audio.play().catch(() => { audioNeedsTap = true; $('unmute').textContent = '🎙 Tap to hear commentary'; $('unmute').hidden = false; });
+}
+function setSound(url) {
+  stopAudio();
+  const c = (M.commentary || []).find(x => x.url === url);
+  video.muted = !!c;
+  if (c) { autoMuted = false; $('unmute').hidden = true; }
+  if (c) startAudio(c.url, !(isApple && /\.m3u8(\?|$)/i.test(c.url))); else $('delayBox').hidden = true;
+}
+
+/* ---------- page content ---------- */
+function drawInfo() {
+  const com = M.commentary || [], sel = $('sound') ? $('sound').value : '';
+  $('info').innerHTML = `
+    <div class="head">
+      <div class="team">${logo(M.homeLogo, M.home, true)}<span>${esc(M.home)}</span></div>
+      <div class="mid"><span class="vs">vs</span>${M.status === 'live' ? '<span class="live">LIVE</span>' : ''}</div>
+      <div class="team">${logo(M.awayLogo, M.away, true)}<span>${esc(M.away)}</span></div>
+    </div>
+    <div class="meta">${logo(M.leagueLogo, M.league)}<span>${esc(M.league)} · ${esc(whenLabel(M.kickoff))}</span></div>
+    <div class="sound"${com.length ? '' : ' hidden'}>
+      <select id="sound" aria-label="Sound"><option value="">Original sound</option>
+        ${com.map(c => `<option value="${esc(c.url)}">🎙 ${esc(c.label)}</option>`).join('')}</select>
+      <div class="delay" id="delayBox" hidden>Sync delay <input type="range" id="delay" min="0" max="15" step="0.5" value="${dnode ? dnode.delayTime.value : 0}"><span id="dv">0s</span></div>
+    </div>`;
+  const s = $('sound'); s.value = com.some(c => c.url === sel) ? sel : '';
+  if (!s.value && audio) setSound('');   // admin removed the commentary that was playing
+  s.onchange = () => setSound(s.value);
+  $('delay').oninput = () => { $('dv').textContent = $('delay').value + 's'; if (dnode) dnode.delayTime.value = +$('delay').value; };
+  if (audio && dnode) $('delayBox').hidden = false;
+}
+function drawMore() {
+  const others = visibleMatches(S).filter(m => m.id !== M.id);
+  $('more').innerHTML = others.length ? '<h3>More matches</h3>' + leagueCards(others, M.id) : '';
+}
+const isEnglish = c => /english|\beng\b/i.test(c.label);
+function applyState(first) {
+  shown = true;
+  M = S.matches.find(x => x.id === id);
+  if (!M) { $('info').innerHTML = '<div class="empty">This match was removed. <a href="/" style="color:var(--brand)">See all matches</a></div>'; setStatus(''); return; }
+  document.title = M.home + ' vs ' + M.away + ' · ' + (S.siteName || 'Rock Videos');
+  $('brand').textContent = S.siteName || 'Rock Videos';
+  if (idx >= M.sources.length) idx = 0;
+  drawInfo(); drawMore();
+  if (first && !defaultDone) {                                  // sound starts on the English commentary when the match has one
+    defaultDone = true;
+    const e = (M.commentary || []).find(isEnglish);
+    if (e) { $('sound').value = e.url; setSound(e.url); }
+  }
+  if (first || (M.sources[idx] ? M.sources[idx].url : '') !== curKey) { fails = 0; play(false); }   // admin changed the link: switch by itself
+}
+async function refresh() {
+  try {
+    const n = await getState(), changed = n.rev !== rev;
+    S = n; $('brand').textContent = S.siteName || 'Rock Videos';
+    if (shown && !changed) return;
+    rev = n.rev; applyState(!shown);
+  } catch { if (!S) setStatus('Could not load this match. Check your connection.'); }
+}
+try {                                                           // the home page already loaded the data: use it, so the video starts at once
+  const c = JSON.parse(sessionStorage.vstate || 'null');
+  if (c && c.matches && c.matches.some(x => x.id === id)) { S = c; rev = c.rev; applyState(true); }
+} catch {}
+refresh(); setInterval(refresh, 4000);
+
+/* ---------- picture buttons: fit / fill / stretch, picture-in-picture, lock ---------- */
+const MODES = [['contain', 'Fit'], ['cover', 'Fill'], ['fill', 'Stretch']];
+let mode = 0, hintT = null;
+try { mode = Math.max(0, Math.min(2, +localStorage.vmode || 0)); } catch {}
+const hint = t => { $('hint').textContent = t; $('hint').classList.add('on'); clearTimeout(hintT); hintT = setTimeout(() => $('hint').classList.remove('on'), 1200); };
+const applyMode = () => { video.style.objectFit = MODES[mode][0]; };
+applyMode();
+$('aspBtn').onclick = () => { mode = (mode + 1) % 3; applyMode(); hint(MODES[mode][1]); try { localStorage.vmode = mode; } catch {} };
+if (!document.pictureInPictureEnabled && !video.webkitSetPresentationMode) $('pipBtn').hidden = true;
+$('pipBtn').onclick = () => {
+  if (document.pictureInPictureElement) document.exitPictureInPicture();
+  else if (video.requestPictureInPicture) video.requestPictureInPicture().catch(() => {});
+  else if (video.webkitSetPresentationMode) video.webkitSetPresentationMode('picture-in-picture');
+};
+function setLock(on) {
+  $('shield').hidden = $('unlockBtn').hidden = !on; $('tools').hidden = on; video.controls = !on;
+  if (on) hint('Screen locked');
+}
+$('lockBtn').onclick = () => setLock(true); $('unlockBtn').onclick = () => setLock(false);
+
+/* ---------- full screen, chosen per device ---------- */
+const ua = navigator.userAgent;
+const isIPhone = /iPhone|iPod/.test(ua);
+const isIPad = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = /Android/.test(ua);
+const isPhone = isIPhone || (isAndroid && Math.min(screen.width, screen.height) < 600);
+const device = isIPhone ? 'iphone' : isIPad ? 'ipad' : isAndroid ? 'android' : 'desktop';
+const land = matchMedia('(orientation: landscape)');
+let fake = false, auto = false, nativeFs = false;
+const inFs = () => !!(document.fullscreenElement || document.webkitFullscreenElement) || fake || nativeFs;
+function syncPrompt() { $('tapFs').hidden = !(isPhone && land.matches && !inFs() && !video.hidden); }
+function setFake(on) { fake = on; document.body.classList.toggle('fs', on); syncPrompt(); }
+
+function enterFs() {
+  if (device === 'iphone') {            // iPhone: Apple's own full-screen player (no browser bars, like other apps)
+    if (!video.hidden && video.webkitEnterFullscreen) { try { video.webkitEnterFullscreen(); return; } catch {} }
+    return setFake(true);
+  }
+  const req = player.requestFullscreen || player.webkitRequestFullscreen;   // Android, iPad, laptops: real full screen, our buttons stay
+  if (req) {
+    Promise.resolve(req.call(player)).then(() => {
+      if (device === 'android' && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+    }).catch(() => setFake(true));
+    return;
+  }
+  if (!video.hidden && video.webkitEnterFullscreen) { try { video.webkitEnterFullscreen(); return; } catch {} }
+  setFake(true);
+}
+function exitFs() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (document.webkitFullscreenElement) document.webkitExitFullscreen();
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch {}
+  auto = false; setFake(false);
+}
+$('fsBtn').onclick = () => inFs() ? exitFs() : enterFs();
+$('tapFs').onclick = enterFs;
+video.addEventListener('dblclick', enterFs);
+
+video.addEventListener('webkitbeginfullscreen', () => { nativeFs = true; syncPrompt(); });
+video.addEventListener('webkitendfullscreen', () => { nativeFs = false; video.play().catch(() => {}); syncPrompt(); });
+document.addEventListener('fullscreenchange', syncPrompt);
+['loadstart', 'playing'].forEach(ev => video.addEventListener(ev, syncPrompt));
+land.addEventListener('change', e => {
+  if (!e.matches && isPhone && (fake || document.fullscreenElement)) exitFs();   // turned back upright
+  syncPrompt();
+});
+syncPrompt();
+
+// Laptops: pressing F11 makes the picture fill the whole screen
+const dm = matchMedia('(display-mode: fullscreen)');
+function checkF11() {
+  if (device !== 'desktop') return;
+  const f11 = dm.matches || (innerHeight >= screen.height - 1 && innerWidth >= screen.width - 1);
+  if (f11 && !document.fullscreenElement && !fake) { auto = true; setFake(true); }
+  else if (!f11 && auto) { auto = false; setFake(false); }
+}
+addEventListener('resize', checkF11); dm.addEventListener('change', checkF11); checkF11();
+</script>
+</body>
+</html>
