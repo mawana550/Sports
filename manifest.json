@@ -1,9 +1,0 @@
-{
-  "name": "Live Sports",
-  "short_name": "Sports",
-  "start_url": "/",
-  "display": "fullscreen",
-  "orientation": "any",
-  "background_color": "#05070c",
-  "theme_color": "#05070c"
-}
