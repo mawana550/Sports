@@ -33,7 +33,9 @@ dialog::backdrop{background:#000b}
 .pick{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:10px;background:#0d1017;border:1px solid var(--border)}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px} .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
 .item{display:flex;align-items:center;gap:8px;padding:9px;border-radius:8px;cursor:pointer} .item:hover{background:#232a3b}
-#plist{max-height:42vh;overflow:auto;margin-top:8px}
+#pwrap{max-height:50vh;overflow:auto;margin-top:8px} .item small{color:var(--muted);margin-left:auto;font-size:.65rem}
+.bgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-top:10px;max-height:55vh;overflow:auto}
+.bc{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:10px;background:#0d1017;cursor:pointer;font-size:.68rem;text-align:center} .bc:hover{background:#232a3b} .bc img{width:44px;height:44px;object-fit:contain}
 .srow{display:grid;grid-template-columns:100px 1fr;gap:6px;margin-top:6px} .srow input:last-child{grid-column:1/-1}
 .trow{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:5px} .trow b{flex:1}
 .chk{display:flex;align-items:center;gap:8px;margin-top:10px} .chk input{width:auto}
@@ -44,7 +46,7 @@ a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
 <body>
 <div class="wrap">
 <div id="login" class="box" style="max-width:340px;margin:60px auto"><h1>Admin login</h1>
-<label>Password</label><input type="password" id="pw" autofocus><div class="acts"><button class="pri" id="loginBtn">Log in</button></div></div>
+<label>Password</label><input type="password" id="pw" autofocus autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="current-password"><div class="acts"><button class="pri" id="loginBtn">Log in</button></div></div>
 
 <div id="app" hidden>
 <div class="top"><h1>⚽ Dashboard</h1><span><a href="/" target="_blank">viewer ↗</a> &nbsp;<button id="logoutBtn">Log out</button></span></div>
@@ -80,14 +82,19 @@ a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
 
 <dialog id="pickDlg">
 <h1>Choose team</h1><input id="pq" placeholder="Type to search or add a team…" style="margin-top:8px">
-<div id="plist"></div>
+<div id="pwrap"><div id="plist"></div><div id="pclubs"></div></div>
 <div id="padd" class="box" style="display:none;margin-top:8px"><b>＋ Add new team “<span id="pnew"></span>”</b>
-<label>Badge link (optional)</label><input id="plogo" placeholder="https://…/badge.png"><div class="acts"><button class="pri" id="padBtn">Add &amp; select</button></div></div>
+<label>Badge link (optional)</label><input id="plogo" placeholder="https://…/badge.png"><div class="acts"><button class="pri" id="padBtn">Add &amp; select</button><button id="pBadge">🛡 Club badges</button></div></div>
 <div class="acts"><button id="cancelP">Close</button></div>
 </dialog>
 
+<dialog id="badgeDlg">
+<h1>Club badges</h1><input id="bq" placeholder="Search clubs…" style="margin-top:8px">
+<div class="bgrid" id="bgrid"></div><div class="acts"><button id="cancelB">Close</button></div>
+</dialog>
+
 <dialog id="teamDlg">
-<h1 id="tTitle">Add team</h1><label>Team name</label><input id="tName"><label>Badge link (optional)</label><input id="tLogo" placeholder="https://…/badge.png">
+<h1 id="tTitle">Add team</h1><label>Team name</label><input id="tName"><label>Badge link (optional)</label><input id="tLogo" placeholder="https://…/badge.png"><button id="tBadge" style="margin-top:6px">🛡 Choose from club badges</button>
 <div class="mt" style="margin-top:10px" id="tPrev"></div>
 <div class="acts"><button class="pri" id="tSave">Save</button><button id="cancelT">Cancel</button></div>
 </dialog>
@@ -111,12 +118,12 @@ async function api(method, url, body){
   const r = await fetch(url, { method, headers: { 'Content-Type':'application/json', 'x-token': token }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 && url !== '/api/login') { logout(); throw new Error('Please log in again'); }
-  if (!r.ok) throw new Error(j.error || 'Error');
+  if (!r.ok) throw new Error(j.error || (r.status === 404 || r.status === 405 ? 'No server found here (HTTP ' + r.status + ') – this host is not running server.js' : 'Server error ' + r.status));
   return j;
 }
 function logout(){ token = ''; localStorage.removeItem('vltv_token'); $('app').hidden = true; $('login').style.display = 'block'; }
 $('logoutBtn').onclick = logout;
-$('loginBtn').onclick = async () => { try { const j = await api('POST', '/api/login', { password: $('pw').value }); token = j.token; localStorage.setItem('vltv_token', token); start(); } catch (e) { toast(e.message, true); } };
+$('loginBtn').onclick = async () => { try { const j = await api('POST', '/api/login', { password: $('pw').value.trim() }); token = j.token; localStorage.setItem('vltv_token', token); start(); } catch (e) { toast(e.message, true); } };
 $('pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').click(); });
 async function load(){ S = await (await fetch('/api/state', {cache:'no-store'})).json(); S.teams = S.teams || []; renderAll(); }
 async function start(){ $('login').style.display = 'none'; $('app').hidden = false; await load(); }
@@ -226,13 +233,37 @@ function openPick(side){ pickSide = side; $('pq').value = ''; renderPick(); $('p
 function renderPick(){
   const raw = $('pq').value.trim(), q = raw.toLowerCase();
   const list = S.teams.filter(t => t.name.toLowerCase().includes(q)).sort(byName);
+  const have = new Set(S.teams.map(t => t.name.toLowerCase()));
+  const clubs = CLUBS.filter(c => c.name.toLowerCase().includes(q) && !have.has(c.name.toLowerCase())).slice(0, 60);
+  $('pclubs').innerHTML = clubs.length ? '<h2>Club library – tap to add</h2>' + clubs.map(c => '<div class="item" data-club="' + c.id + '">' + badge(c.logo) + '<span>' + esc(c.name) + '</span><small>' + esc(c.comps.join(' · ')) + '</small></div>').join('') : '';
   $('plist').innerHTML = list.map(t => '<div class="item" data-id="' + t.id + '">' + badge(t.logo) + '<span>' + esc(t.name) + '</span></div>').join('') || '<div class="meta">No team found – add it below.</div>';
   $('padd').style.display = raw && !S.teams.some(t => t.name.toLowerCase() === q) ? 'block' : 'none'; $('pnew').textContent = raw;
 }
 function choose(t){ F[pickSide] = { id: t.id, name: t.name, logo: t.logo || '' }; showTeams(); $('pickDlg').close(); }
 $('pickHome').onclick = () => openPick('home'); $('pickAway').onclick = () => openPick('away');
 $('pq').oninput = renderPick; $('cancelP').onclick = () => $('pickDlg').close();
-$('plist').onclick = e => { const i = e.target.closest('.item'); if (i) choose(S.teams.find(t => t.id === i.dataset.id)); };
+let CLUBS = []; fetch('/logos/clubs.json').then(r => r.json()).then(j => { CLUBS = j; }).catch(() => {});
+$('pwrap').onclick = async e => {
+  const i = e.target.closest('.item'); if (!i) return;
+  if (!i.dataset.club) return choose(S.teams.find(t => t.id === i.dataset.id));
+  const c = CLUBS.find(x => x.id === i.dataset.club);
+  try { const t = await api('POST', '/api/admin/teams', { name: c.name, logo: c.logo }); await load(); choose(t); } catch (err) { toast(err.message, true); }
+};
+/* club badge chooser (fills a badge field) */
+let badgeFor = null;
+function openBadges(logoInput, nameInput){ badgeFor = { logoInput, nameInput }; $('bq').value = ''; renderBadges(); $('badgeDlg').showModal(); }
+function renderBadges(){
+  const q = $('bq').value.trim().toLowerCase();
+  $('bgrid').innerHTML = CLUBS.filter(c => c.name.toLowerCase().includes(q)).map(c => '<div class="bc" data-id="' + c.id + '"><img src="' + esc(c.logo) + '" loading="lazy" alt=""><span>' + esc(c.name) + '</span></div>').join('') || '<div class="meta">No club found.</div>';
+}
+$('bq').oninput = renderBadges; $('cancelB').onclick = () => $('badgeDlg').close();
+$('bgrid').onclick = e => {
+  const b = e.target.closest('.bc'); if (!b || !badgeFor) return; const c = CLUBS.find(x => x.id === b.dataset.id);
+  badgeFor.logoInput.value = c.logo;
+  if (badgeFor.nameInput && !badgeFor.nameInput.value.trim()) badgeFor.nameInput.value = c.name;
+  badgeFor.logoInput.dispatchEvent(new Event('input')); $('badgeDlg').close();
+};
+$('tBadge').onclick = () => openBadges($('tLogo'), $('tName')); $('pBadge').onclick = () => openBadges($('plogo'), null);
 $('padBtn').onclick = async () => {
   try { const t = await api('POST', '/api/admin/teams', { name: $('pq').value, logo: $('plogo').value.trim() }); $('plogo').value = ''; await load(); choose(t); }
   catch (e) { toast(e.message, true); }

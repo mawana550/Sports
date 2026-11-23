@@ -6,7 +6,10 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const PASS = process.env.ADMIN_PASSWORD || 'admin123';
+// hosts sometimes add spaces/quotes/newlines around variables, so they are cleaned
+const cleanEnv = v => String(v ?? '').trim().replace(/^(["'])(.*)\1$/, '$2').trim();
+const PASS = cleanEnv(process.env.ADMIN_PASSWORD ?? process.env.ADMIN_PASS) || 'admin123';
+const USING_DEFAULT_PASS = PASS === 'admin123';
 const DB_FILE = path.join(__dirname, 'data.json');
 const TOKEN = crypto.createHash('sha256').update('vltv:' + PASS).digest('hex');
 const uid = () => crypto.randomBytes(4).toString('hex');
@@ -54,7 +57,7 @@ if (!db.commentaryMoved) {
       m.commentary = db.commentary.map(c => ({ label: c.label, url: c.url }));
   db.commentaryMoved = true; save(false);
 }
-const cleanTeam = b => ({ name: str(b.name, 40), logo: isUrl(str(b.logo, 500)) ? str(b.logo, 500) : '' });
+const cleanTeam = b => ({ name: str(b.name, 40), logo: isLogo(str(b.logo, 500)) ? str(b.logo, 500) : '' });
 
 function save(bump = true) {
   if (bump) db.rev++;
@@ -66,12 +69,13 @@ function save(bump = true) {
 // ---------- validation ----------
 const str = (v, n = 120) => String(v ?? '').trim().slice(0, n);
 const isUrl = u => /^https?:\/\//i.test(u);
+const isLogo = u => isUrl(u) || /^\/logos\/[\w.-]+\.(png|webp|jpe?g|svg)$/i.test(u); // own club badges live in /logos
 function cleanMatch(b, id) {
   const sources = (Array.isArray(b.sources) ? b.sources : [])
     .map(s => ({ type: s.type === 'embed' ? 'embed' : 'hls', url: str(s.url, 1000), label: str(s.label, 40) }))
     .filter(s => isUrl(s.url)).slice(0, 5);
   const k = new Date(b.kickoff);
-  const logo = v => isUrl(str(v, 500)) ? str(v, 500) : '';
+  const logo = v => isLogo(str(v, 500)) ? str(v, 500) : '';
   const tid = v => /^[a-f0-9]{1,16}$/.test(String(v || '')) ? String(v) : '';
   return {
     id,
@@ -200,6 +204,12 @@ http.createServer(async (req, res) => {
     const STATIC = { '/common.js': 'application/javascript', '/common.css': 'text/css', '/manifest.json': 'application/manifest+json' };
     if (m === 'GET' && STATIC[p]) return sendFile(res, p.slice(1), STATIC[p]);
 
+    if (m === 'GET' && p.startsWith('/logos/')) {
+      const f = path.join(__dirname, 'logos', path.basename(p));
+      try { const buf = fs.readFileSync(f); res.writeHead(200, { 'Content-Type': { '.png': 'image/png', '.json': 'application/json', '.webp': 'image/webp' }[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=604800' }); return res.end(buf); }
+      catch { return send(res, 404, { error: 'not found' }); }
+    }
+
     if (m === 'GET' && p === '/proxy') {
       if (viewerCount() >= PROXY_MAX_VIEWERS) return send(res, 503, { error: 'proxy off: too many viewers' });
       return await proxy(req, res, new URL(req.url, 'http://x').searchParams.get('u') || '');
@@ -213,8 +223,8 @@ http.createServer(async (req, res) => {
 
     if (m === 'POST' && p === '/api/login') {
       const b = await readBody(req);
-      if (b.password === PASS) return send(res, 200, { token: TOKEN });
-      return setTimeout(() => send(res, 401, { error: 'Wrong password' }), 800);
+      if (String(b.password ?? '').trim() === PASS) return send(res, 200, { token: TOKEN });
+      return setTimeout(() => send(res, 401, { error: 'Wrong password' + (USING_DEFAULT_PASS ? ' (no ADMIN_PASSWORD is set on this server, so the default is in use)' : '') }), 800);
     }
 
     if (p.startsWith('/api/admin/')) {
