@@ -236,7 +236,7 @@ function renderPick(){
   const have = new Set(S.teams.map(t => t.name.toLowerCase()));
   $('pchips').innerHTML = chips(pComp);
   const clubs = CLUBS.filter(c => (!pComp || c.comps.includes(pComp)) && c.name.toLowerCase().includes(q) && !have.has(c.name.toLowerCase())).slice(0, 60);
-  $('pclubs').innerHTML = clubs.length ? '<h2>Club library – tap to add</h2>' + clubs.map(c => '<div class="item" data-club="' + c.id + '">' + badge(c.logo) + '<span>' + esc(c.name) + '</span><small>' + esc(c.comps.join(' · ')) + '</small></div>').join('') : '';
+  $('pclubs').innerHTML = clubsErr ? '<div class="meta" style="padding:8px">Club library not found on this server (clubs.json and the badge pictures are missing).</div>' : clubs.length ? '<h2>Club library – tap to add</h2>' + clubs.map(c => '<div class="item" data-club="' + c.id + '">' + badge(c.logo) + '<span>' + esc(c.name) + '</span><small>' + esc(c.comps.join(' · ')) + '</small></div>').join('') : '';
   $('plist').innerHTML = list.map(t => '<div class="item" data-id="' + t.id + '">' + badge(t.logo) + '<span>' + esc(t.name) + '</span></div>').join('') || '<div class="meta">No team found – add it below.</div>';
   $('padd').style.display = raw && !S.teams.some(t => t.name.toLowerCase() === q) ? 'block' : 'none'; $('pnew').textContent = raw;
 }
@@ -247,7 +247,8 @@ const COMPS = [['', 'All'], ['Premier League', 'English'], ['La Liga', 'Spanish'
 const chips = cur => COMPS.map(([v, l]) => '<button class="chip' + (cur === v ? ' on' : '') + '" data-c="' + v + '">' + l + '</button>').join('');
 let pComp = '', bComp = '';
 document.addEventListener('click', e => { const c = e.target.closest('#pchips .chip, #bchips .chip'); if (!c) return; if (c.closest('#pchips')) { pComp = c.dataset.c; renderPick(); } else { bComp = c.dataset.c; renderBadges(); } });
-let CLUBS = []; fetch('/logos/clubs.json').then(r => r.json()).then(j => { CLUBS = j; }).catch(() => {});
+let CLUBS = []; let clubsErr = false;
+fetch('/logos/clubs.json').then(r => r.json()).then(j => { if (Array.isArray(j)) CLUBS = j; else clubsErr = true; }).catch(() => { clubsErr = true; });
 $('pwrap').onclick = async e => {
   const i = e.target.closest('.item'); if (!i) return;
   if (!i.dataset.club) return choose(S.teams.find(t => t.id === i.dataset.id));
