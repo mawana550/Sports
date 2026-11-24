@@ -213,7 +213,7 @@ http.createServer(async (req, res) => {
     if (m === 'GET' && (p.startsWith('/logos/') || p.startsWith('/backgrounds/'))) {
       const name = path.basename(p); // badges are looked up in /logos, or next to server.js if they were uploaded flat
       let f = path.join(__dirname, p.split('/')[1], name);
-      if (!fs.existsSync(f) && (name === 'clubs.json' || /\.png$/i.test(name))) f = path.join(__dirname, name);
+      if (!fs.existsSync(f) && (name === 'clubs.json' || /\.(png|webp|jpe?g|gif)$/i.test(name))) f = path.join(__dirname, name);
       try { const buf = fs.readFileSync(f); res.writeHead(200, { 'Content-Type': { '.png': 'image/png', '.json': 'application/json', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' }[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=604800' }); return res.end(buf); }
       catch { return send(res, 404, { error: 'not found' }); }
     }
