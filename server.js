@@ -41,6 +41,11 @@ let db;
 try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = seed(); save(false); }
 
 db.siteName = db.siteName || 'Rock Videos';
+db.siteLogo = db.siteLogo || '';
+if (!Array.isArray(db.backgrounds)) db.backgrounds = [
+  { id: 'champions', name: 'Champions League', url: '/backgrounds/champions.webp' },
+  { id: 'zigzag', name: 'Purple zigzag', url: '/backgrounds/zigzag.webp' }];
+const bgRef = v => { const t = str(v, 500); return /^[a-z0-9-]{1,40}$/.test(t) || isLogo(t) ? t : ''; };
 
 // team library (built from existing matches the first time)
 db.teams = Array.isArray(db.teams) ? db.teams : [];
@@ -69,7 +74,7 @@ function save(bump = true) {
 // ---------- validation ----------
 const str = (v, n = 120) => String(v ?? '').trim().slice(0, n);
 const isUrl = u => /^https?:\/\//i.test(u);
-const isLogo = u => isUrl(u) || /^\/logos\/[\w.-]+\.(png|webp|jpe?g|svg)$/i.test(u); // own club badges live in /logos
+const isLogo = u => isUrl(u) || /^\/(logos|backgrounds)\/[\w.-]+\.(png|webp|jpe?g|svg|gif)$/i.test(u); // own club badges live in /logos
 function cleanMatch(b, id) {
   const sources = (Array.isArray(b.sources) ? b.sources : [])
     .map(s => ({ type: s.type === 'embed' ? 'embed' : 'hls', url: str(s.url, 1000), label: str(s.label, 40) }))
@@ -86,6 +91,7 @@ function cleanMatch(b, id) {
     awayLogo: logo(b.awayLogo),
     league: str(b.league, 40) || 'Village League',
     leagueLogo: logo(b.leagueLogo),
+    bg: bgRef(b.bg),
     kickoff: isNaN(k) ? new Date().toISOString() : k.toISOString(),
     status: ['upcoming', 'live', 'finished'].includes(b.status) ? b.status : 'upcoming',
     pinned: !!b.pinned,
@@ -204,11 +210,11 @@ http.createServer(async (req, res) => {
     const STATIC = { '/common.js': 'application/javascript', '/common.css': 'text/css', '/manifest.json': 'application/manifest+json' };
     if (m === 'GET' && STATIC[p]) return sendFile(res, p.slice(1), STATIC[p]);
 
-    if (m === 'GET' && p.startsWith('/logos/')) {
+    if (m === 'GET' && (p.startsWith('/logos/') || p.startsWith('/backgrounds/'))) {
       const name = path.basename(p); // badges are looked up in /logos, or next to server.js if they were uploaded flat
-      let f = path.join(__dirname, 'logos', name);
+      let f = path.join(__dirname, p.split('/')[1], name);
       if (!fs.existsSync(f) && (name === 'clubs.json' || /\.png$/i.test(name))) f = path.join(__dirname, name);
-      try { const buf = fs.readFileSync(f); res.writeHead(200, { 'Content-Type': { '.png': 'image/png', '.json': 'application/json', '.webp': 'image/webp' }[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=604800' }); return res.end(buf); }
+      try { const buf = fs.readFileSync(f); res.writeHead(200, { 'Content-Type': { '.png': 'image/png', '.json': 'application/json', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' }[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=604800' }); return res.end(buf); }
       catch { return send(res, 404, { error: 'not found' }); }
     }
 
@@ -220,7 +226,7 @@ http.createServer(async (req, res) => {
     if (m === 'GET' && p === '/api/state') {
       const cid = new URL(req.url, 'http://x').searchParams.get('c');
       if (cid) seenViewers.set(cid.slice(0, 40), Date.now());
-      return send(res, 200, { proxyOk: viewerCount() < PROXY_MAX_VIEWERS, teams: db.teams, rev: db.rev, leagueName: db.leagueName, siteName: db.siteName, matches: db.matches, commentary: db.commentary });
+      return send(res, 200, { proxyOk: viewerCount() < PROXY_MAX_VIEWERS, teams: db.teams, rev: db.rev, leagueName: db.leagueName, siteName: db.siteName, siteLogo: db.siteLogo, backgrounds: db.backgrounds, matches: db.matches, commentary: db.commentary });
     }
 
     if (m === 'POST' && p === '/api/login') {
@@ -275,10 +281,22 @@ http.createServer(async (req, res) => {
           .filter(c => c.label && isUrl(c.url)).slice(0, 10);
         save(); return send(res, 200, { ok: true });
       }
+      if (m === 'POST' && p === '/api/admin/backgrounds') {
+        const b = await readBody(req);
+        const url = str(b.url, 500);
+        if (!isUrl(url) && !isLogo(url)) return send(res, 400, { error: 'Enter a full picture link starting with http' });
+        if (db.backgrounds.length >= 20) return send(res, 400, { error: 'Up to 20 backgrounds - delete one first' });
+        const bg = { id: uid(), name: str(b.name, 40) || 'Background', url };
+        db.backgrounds.push(bg); save(); return send(res, 200, bg);
+      }
+      const bgm = p.match(/^\/api\/admin\/backgrounds\/([a-f0-9]+)$/);
+      if (bgm && m === 'DELETE') { db.backgrounds = db.backgrounds.filter(x => x.id !== bgm[1]); save(); return send(res, 200, { ok: true }); }
       if (m === 'PUT' && p === '/api/admin/settings') {
         const b = await readBody(req);
         db.leagueName = str(b.leagueName, 50) || db.leagueName;
-        db.siteName = str(b.siteName, 40) || db.siteName; save();
+        db.siteName = str(b.siteName, 40) || db.siteName;
+        if (b.siteLogo !== undefined) db.siteLogo = isLogo(str(b.siteLogo, 500)) ? str(b.siteLogo, 500) : '';
+        save();
         return send(res, 200, { ok: true });
       }
     }

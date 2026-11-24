@@ -5,26 +5,33 @@
 <title>Rock Videos</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#05070c">
+<meta name="description" content="Live and upcoming matches. Tap a fixture to watch.">
 <link rel="manifest" href="/manifest.json">
 <link rel="stylesheet" href="/common.css">
-<style>
-  header { padding:calc(env(safe-area-inset-top,0px) + 18px) 14px 4px; }
-  .brand { font-size:2rem; line-height:1.1; }
-  .sub { margin-top:4px; font-size:1.1rem; font-weight:600; color:var(--muted); }
-</style>
 </head>
 <body>
-<header><div class="brand" id="brand">Rock Videos</div><div class="sub">Matches</div></header>
-<div id="app"><div class="empty">Loading…</div></div>
+<header class="hero">
+  <div id="mark"><span class="site-mark" aria-hidden="true">R</span></div>
+  <div class="hero-text"><div class="brand" id="brand">Rock Videos</div><div class="sub">Live &amp; upcoming matches · tap a fixture to watch</div></div>
+</header>
+<div class="stats" id="stats"></div>
+<main id="app"><div class="empty">Loading…</div></main>
 
 <script src="/common.js"></script>
 <script>
 let S = null, shownRev = -1, shownMinute = -1;
 function draw() {
-  $('brand').textContent = S.siteName || 'Rock Videos';
-  document.title = S.siteName || 'Rock Videos';
+  const name = S.siteName || 'Rock Videos';
+  $('brand').textContent = name;
+  document.title = name;
+  $('mark').innerHTML = siteMark(S);
   const list = visibleMatches(S);
-  $('app').innerHTML = list.length ? leagueCards(list) : '<div class="empty">No matches right now.</div>';
+  const live = list.filter(m => m.status === 'live').length;
+  $('stats').innerHTML = list.length
+    ? (live ? `<span class="stat"><b style="color:var(--live)">● ${live}</b> live now</span>` : '') +
+      `<span class="stat"><b>${list.length - live}</b> upcoming</span>`
+    : '';
+  $('app').innerHTML = list.length ? leagueCards(list) : '<div class="empty">No matches right now. Check back soon.</div>';
 }
 async function refresh() {
   try {
