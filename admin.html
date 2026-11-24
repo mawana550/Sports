@@ -41,6 +41,10 @@ dialog::backdrop{background:#000b}
 .chk{display:flex;align-items:center;gap:8px;margin-top:10px} .chk input{width:auto}
 #msg{position:fixed;inset:auto auto 16px 50%;transform:translateX(-50%);margin:0;border:0;background:var(--green);color:#04130b;padding:9px 16px;border-radius:10px;font-weight:700} #msg.err{background:var(--red);color:#fff}
 a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
+.bgl{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px}
+.bgl img{width:96px;height:54px;object-fit:cover;border-radius:6px;background:#0d1017;flex:none}
+.bgl b{flex:1;font-size:.9rem}
+.bt{display:block;cursor:pointer;padding:6px;border-radius:10px;background:#0d1017}.bt:hover{background:#232a3b}.bt.on{outline:2px solid var(--green)}
 </style>
 </head>
 <body>
@@ -64,16 +68,37 @@ a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
 </section>
 
 
-<section id="t-set" hidden><div class="box"><label>Site name (shown in orange at the top of the home page)</label><input id="sname"><label>League name</label><div class="bar"><input id="lname"><button class="pri" id="saveName">Save</button></div></div></section>
+<section id="t-set" hidden>
+<div class="box">
+<label>Site name (shown in orange at the top of the home page)</label><input id="sname">
+<label>Site logo link (optional – shown in the header; a wide or square picture with a clear background)</label><input id="slogo" placeholder="https://…/logo.png">
+<label>League name</label><input id="lname">
+<div class="acts"><button class="pri" id="saveName">Save settings</button></div>
+</div>
+<h2>Card backgrounds</h2>
+<div class="box">
+<div class="meta">Pictures that sit behind match cards. Pick one per match in the match form. Use wide pictures (at least 1200 px across) so they stay sharp on TVs. Up to 20.</div>
+<div id="bgList" style="margin-top:8px"></div>
+<label>New background name</label><input id="bgName" placeholder="e.g. Derby night">
+<label>Picture link</label><input id="bgUrl" placeholder="https://…/picture.jpg">
+<div class="acts"><button class="pri" id="bgAdd">+ Add background</button></div>
+</div>
+</section>
 </div>
 </div>
+
+<dialog id="bgDlg">
+<h1>Card background</h1><div class="meta">The picture behind this match's card on the home page.</div>
+<div class="bgrid" id="bgGrid"></div>
+<div class="acts"><button id="cancelBg">Close</button></div>
+</dialog>
 
 <dialog id="matchDlg">
 <h1 id="mTitle">New match</h1>
 <div class="g2"><div><label>Home team</label><button class="pick" id="pickHome"></button></div><div><label>Away team</label><button class="pick" id="pickAway"></button></div></div>
 <div class="g2"><div><label>Competition</label><input id="league"></div><div><label>Kick-off</label><input type="datetime-local" id="kick"></div></div>
 <label>Competition badge link (optional)</label><input id="leagueLogo" placeholder="https://…/league.png">
-<div class="g2"><div><label>Status</label><select id="status"><option value="upcoming">Upcoming</option><option value="live">Live</option><option value="finished">Finished</option></select></div></div>
+<div class="g2"><div><label>Status</label><select id="status"><option value="upcoming">Upcoming</option><option value="live">Live</option><option value="finished">Finished</option></select></div><div><label>Card background</label><button class="pick" id="pickBg"></button></div></div>
 <details id="srcDet" style="margin-top:10px"><summary style="cursor:pointer;color:var(--cyan);font-size:.85rem">Stream links (optional)</summary><div id="srcs"></div></details>
 <details id="comDet" style="margin-top:10px"><summary style="cursor:pointer;color:var(--cyan);font-size:.85rem">Commentary links for this match (optional)</summary><div id="coms"></div><div class="meta">Use the station's online stream (.mp3 / .aac / .m3u8). Viewers pick it from the 🎙 menu on this match.</div></details>
 <div class="chk"><input type="checkbox" id="pinned"><label for="pinned" style="margin:0;color:#fff;font-size:.9rem">📌 Pin to the top</label></div>
@@ -208,14 +233,14 @@ function openMatch(m){
   buildSrc(m ? m.sources : []); $('srcDet').open = !!(m && m.sources.length);
   buildCom(m ? (m.commentary || []) : []); $('comDet').open = !!(m && m.commentary && m.commentary.length);
   $('anotherBtn').style.display = F.id ? 'none' : ''; $('mTitle').textContent = F.id ? 'Edit match' : 'New match';
-  showTeams(); $('matchDlg').showModal();
+  showTeams(); bgSel = m ? (m.bg || '') : ''; showBg(); $('matchDlg').showModal();
 }
 $('newMatch').onclick = () => openMatch(); $('cancelM').onclick = () => $('matchDlg').close();
 async function saveMatch(another){
   if (!F.home || !F.away) return toast('Choose both teams', true);
   if (F.home.name === F.away.name) return toast('Pick two different teams', true);
   const types = [...document.querySelectorAll('.stype')], urls = [...document.querySelectorAll('.surl')], labels = [...document.querySelectorAll('.slabel')];
-  const d = { home: F.home.name, homeId: F.home.id, homeLogo: F.home.logo, away: F.away.name, awayId: F.away.id, awayLogo: F.away.logo, league: $('league').value, leagueLogo: $('leagueLogo').value.trim(),
+  const d = { home: F.home.name, homeId: F.home.id, homeLogo: F.home.logo, away: F.away.name, awayId: F.away.id, awayLogo: F.away.logo, league: $('league').value, leagueLogo: $('leagueLogo').value.trim(), bg: bgSel,
     kickoff: $('kick').value ? new Date($('kick').value).toISOString() : new Date().toISOString(), status: $('status').value, pinned: $('pinned').checked,
     commentary: [...document.querySelectorAll('#coms .srow')].map(r => ({ label: r.querySelector('.clabel').value, url: r.querySelector('.curl').value.trim() })).filter(c => c.url),
     sources: urls.map((u,i) => ({ type: types[i].value, url: u.value.trim(), label: labels[i].value })).filter(s => s.url) };
@@ -295,8 +320,41 @@ $('teams').onclick = e => {
 };
 
 /* ---------- settings ---------- */
-$('saveName').onclick = async () => { try { await api('PUT', '/api/admin/settings', { leagueName: $('lname').value, siteName: $('sname').value }); toast('Saved ✔'); load(); } catch (e) { toast(e.message, true); } };
-function renderAll(){ $('lname').value = S.leagueName; $('sname').value = S.siteName || ''; renderMatches(); renderTeams(); }
+$('saveName').onclick = async () => { try { await api('PUT', '/api/admin/settings', { leagueName: $('lname').value, siteName: $('sname').value, siteLogo: $('slogo').value.trim() }); toast('Saved ✔'); load(); } catch (e) { toast(e.message, true); } };
+
+/* ---------- card backgrounds ---------- */
+let bgSel = '';
+const bgThumbUrl = id => { const b = (S.backgrounds || []).find(x => x.id === id); return b ? b.url : (/^https?:/i.test(id) ? id : ''); };
+function showBg(){
+  const u = bgThumbUrl(bgSel);
+  const name = u ? ((S.backgrounds || []).find(x => x.id === bgSel) || { name: 'Custom picture' }).name : 'None (plain colour)';
+  $('pickBg').innerHTML = (u ? '<img src="' + esc(u) + '" alt="" style="width:44px;height:28px;object-fit:cover;border-radius:6px">' : '') + '<span>' + esc(name) + '</span>';
+}
+$('pickBg').onclick = () => { renderBgPick(); $('bgDlg').showModal(); };
+function renderBgPick(){
+  const items = [{ id: '', name: 'None (plain colour)', url: '' }, ...(S.backgrounds || [])];
+  $('bgGrid').innerHTML = items.map(b => '<div class="bt' + (b.id === bgSel ? ' on' : '') + '" data-id="' + esc(b.id) + '">' +
+    (b.url ? '<img src="' + esc(b.url) + '" alt="" style="width:100%;height:70px;object-fit:cover;border-radius:8px">' : '<div style="height:70px;border-radius:8px;background:#151922;display:grid;place-items:center;color:var(--muted);font-size:.75rem">plain</div>') +
+    '<div class="meta" style="margin-top:4px;color:#fff">' + esc(b.name) + '</div></div>').join('');
+}
+$('bgGrid').onclick = e => { const t = e.target.closest('[data-id]'); if (!t) return; bgSel = t.dataset.id; showBg(); $('bgDlg').close(); };
+$('cancelBg').onclick = () => $('bgDlg').close();
+function renderBgList(){
+  $('bgList').innerHTML = (S.backgrounds || []).map(b => '<div class="bgl" data-id="' + esc(b.id) + '"><img src="' + esc(b.url) + '" alt=""><b>' + esc(b.name) + '</b><button class="red" data-a="bgdel">Delete</button></div>').join('') || '<div class="meta">No backgrounds yet.</div>';
+}
+$('bgList').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const id = b.closest('[data-id]').dataset.id;
+  if (confirm('Delete this background? Matches using it will show the plain colour.'))
+    api('DELETE', '/api/admin/backgrounds/' + id).then(() => { toast('Deleted'); load(); }).catch(err => toast(err.message, true));
+};
+$('bgAdd').onclick = async () => {
+  const url = $('bgUrl').value.trim();
+  if (!/^https?:\/\//i.test(url)) return toast('Enter a full picture link starting with http', true);
+  try { await api('POST', '/api/admin/backgrounds', { name: $('bgName').value.trim() || 'Background', url }); $('bgName').value = ''; $('bgUrl').value = ''; toast('Background added ✔'); load(); }
+  catch (e) { toast(e.message, true); }
+};
+function renderAll(){ $('lname').value = S.leagueName; $('sname').value = S.siteName || ''; $('slogo').value = S.siteLogo || ''; renderBgList(); renderMatches(); renderTeams(); }
 setInterval(() => { if (token && !document.querySelector('dialog[open]')) renderMatches(); }, 60000);
 if (token) start();
 </script>
