@@ -168,12 +168,42 @@ video.addEventListener('playing', () => {
   fails = 0; setStatus('');
   if (curProxy && curKey) { const h = hostOf(curKey), l = proxied(); if (h && !l.includes(h)) try { sessionStorage.vproxy = JSON.stringify(l.concat(h)); } catch {} }
 });
-setInterval(() => {                                          // restart if the picture freezes for 12 seconds
-  if (!curKey || video.hidden || video.paused || video.readyState < 2) { stuckAt = 0; return; }
-  if (video.currentTime !== lastT) { lastT = video.currentTime; stuckAt = 0; return; }
-  stuckAt += 3;
-  if (stuckAt >= 12) { stuckAt = 0; retry(video.src.includes('/proxy?u=')); }
+/* ---------- auto-reconnect when the internet is slow or the stream falls behind ---------- */
+let lagBad = 0, bufFor = 0, waits = [], lastAuto = 0, autos = [];
+video.addEventListener('waiting', () => { const n = Date.now(); waits = waits.filter(t => n - t < 60000); waits.push(n); });
+function liveEdge() {                 // newest picture available, or 0 when this is not a live stream
+  try {
+    if (hls) { const L = hls.levels && hls.levels[hls.currentLevel]; return L && L.details && L.details.live && hls.liveSyncPosition ? hls.liveSyncPosition : 0; }
+    return video.duration === Infinity && video.seekable.length ? video.seekable.end(video.seekable.length - 1) : 0;
+  } catch { return 0; }
+}
+function autoReconnect(msg) {
+  const n = Date.now();
+  if (n - lastAuto < 20000) return;   // never more than once every 20 seconds
+  lastAuto = n; lagBad = bufFor = 0; waits = [];
+  autos = autos.filter(t => n - t < 300000); autos.push(n);
+  if (autos.length >= 4) {            // reconnecting did not help 4 times in 5 minutes: refresh the whole page (at most once per 5 minutes)
+    try { if (n - (+sessionStorage.vreload || 0) > 300000) { sessionStorage.vreload = n; return location.reload(); } } catch {}
+  }
+  setStatus(msg || 'Reconnecting…');
+  play(curProxy);
+}
+function jumpLive() { const e = liveEdge(); if (e) try { video.currentTime = e; } catch {} }
+setInterval(() => {
+  if (!curKey || video.hidden || video.paused || video.ended) { stuckAt = 0; lagBad = bufFor = 0; return; }
+  if (video.readyState >= 2 && video.currentTime !== lastT) { lastT = video.currentTime; stuckAt = 0; }
+  else if (video.readyState >= 2) { stuckAt += 3; if (stuckAt >= 12) { stuckAt = 0; return autoReconnect('Picture froze - reconnecting…'); } }
+  if (video.readyState < 3) { bufFor += 3; if (bufFor >= 15) return autoReconnect('Slow connection - reconnecting…'); } else bufFor = 0;
+  waits = waits.filter(t => Date.now() - t < 60000);
+  if (waits.length >= 6) return autoReconnect('Slow connection - reconnecting…');
+  const edge = liveEdge();
+  if (edge) {                         // fallen behind the live picture: jump forward, and reconnect if that does not fix it
+    const lag = edge - video.currentTime;
+    if (lag > (hls ? 15 : 45)) { lagBad++; if (lagBad === 2) jumpLive(); if (lagBad >= 6) return autoReconnect('Catching up to live…'); }
+    else lagBad = 0;
+  }
 }, 3000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !video.paused && !video.hidden) { const e = liveEdge(); if (e && e - video.currentTime > (hls ? 15 : 45)) jumpLive(); } });
 window.addEventListener('online', () => { fails = 0; play(false); });
 
 /* ---------- commentary (replaces the video sound, with a sync delay) ---------- */
