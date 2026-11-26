@@ -44,6 +44,8 @@ try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = seed(); 
 
 db.siteName = db.siteName || 'Rock Videos';
 db.siteLogo = db.siteLogo || '';
+const APP_LOGO = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRJvZ8m0GeeOMKrvLRZ59HZwFp5Yc-f8JiERU0Gnt-d2Q&s=10';
+if (!db.siteLogoInit) { if (!db.siteLogo) db.siteLogo = APP_LOGO; db.siteLogoInit = true; save(false); }
 if (!Array.isArray(db.backgrounds)) db.backgrounds = [
   { id: 'champions', name: 'Champions League', url: '/backgrounds/champions.webp' },
   { id: 'zigzag', name: 'Purple zigzag', url: '/backgrounds/zigzag.webp' }];
@@ -204,15 +206,28 @@ async function proxy(req, res, u) {
 
 // ---------- automatic fixtures (football-data.org) ----------
 // Needs a free API token from https://www.football-data.org  ->  set it as FOOTBALL_DATA_API_KEY
-// (never paste the token into the code or into a chat). Free plan covers PL, La Liga and Champions League.
 // If your host does not pass environment variables to the app, paste your football-data.org token between the quotes below.
 // Keep this file PRIVATE (never upload it to a public GitHub repo with the token inside).
-const FD_KEY_HARDCODED = '9bcb69ee5cb949ba8c91f636e192dbe1';
+const FD_KEY_HARDCODED = '';
 const FD_KEY = cleanEnv(process.env.FOOTBALL_DATA_API_KEY) || cleanEnv(FD_KEY_HARDCODED);
 const FD_BASE = cleanEnv(process.env.FOOTBALL_DATA_BASE) || 'https://api.football-data.org/v4';
-const FD_COMPS = { PL: 'Premier League', PD: 'La Liga', CL: 'Champions League' };
-db.sync = Object.assign({ enabled: true, comps: ['PL', 'PD', 'CL'], daysAhead: 10, everyHours: 6, last: null }, db.sync || {});
+const FD_DELAY = +process.env.FD_DELAY_MS || 6500; // free plan = 10 requests a minute, so requests are spaced out
+
+const FD_COMPS = { PL: 'Premier League', PD: 'La Liga', CL: 'Champions League', BL1: 'Bundesliga', SA: 'Serie A', FL1: 'Ligue 1' };
+// Premier League, La Liga and Champions League: every team. The other leagues: only the big teams below.
+const FULL_COMPS = ['PL', 'PD', 'CL'];
+const BIG_TEAMS = [/bayern/, /paris saint germain|^psg$/, /^milan$/, /^inter(nazionale)?( milano)?$/, /juventus/, /dortmund/, /napoli/];
+// competition badge + card background (background ids exist in the Settings -> Card backgrounds list)
+const COMP_STYLE = {
+  PL: { logo: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRZRkF0tC01r2m2mKYLCNShSKuRS_BFzdYTud2TrB4yHg&s=10', bg: 'zigzag' },
+  CL: { logo: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTMfMmepwUheyj7y8fHBlpmJ96r6hsWkbupYSB976-EuQ&s=10', bg: 'champions' },
+  PD: { logo: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRkGtrsnaXnizognCQhNSb2fI2JYbSU6_qYm6WVMsVedg&s=10', bg: '' }
+};
+const DEFAULT_SYNC = { enabled: true, comps: Object.keys(FD_COMPS), everyHours: 6, last: null, v: 2 };
+db.sync = Object.assign({}, DEFAULT_SYNC, db.sync || {});
+if (db.sync.v !== 2) { db.sync.comps = DEFAULT_SYNC.comps.slice(); db.sync.v = 2; }
 let syncing = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let clubIndex = null;
 const norm = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -220,9 +235,10 @@ const norm = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u030
 function clubs() {
   if (clubIndex) return clubIndex;
   clubIndex = new Map();
-  try { for (const c of JSON.parse(fs.readFileSync(path.join(__dirname, 'clubs.json'), 'utf8'))) clubIndex.set(norm(c.name), c); } catch {}
+  try { for (const c of JSON.parse(fs.readFileSync(path.join(__dirname, 'clubs.json'), 'utf8'))) { clubIndex.set(norm(c.name), c); clubIndex.set(norm(String(c.id).replace(/-/g, ' ')), c); } } catch {}
   return clubIndex;
 }
+const isBig = t => [t.name, t.shortName, t.tla].some(n => n && BIG_TEAMS.some(re => re.test(norm(n))));
 function teamFor(apiTeam) {
   const names = [apiTeam.name, apiTeam.shortName].filter(Boolean);
   let team = null;
@@ -237,65 +253,89 @@ function teamFor(apiTeam) {
   return team;
 }
 const mapStatus = s => ['IN_PLAY', 'PAUSED', 'LIVE'].includes(s) ? 'live' : ['FINISHED', 'AWARDED'].includes(s) ? 'finished' : 'upcoming';
-const ymd = d => d.toISOString().slice(0, 10);
 
 async function fdGet(pathAndQuery) {
-  const r = await fetch(FD_BASE + pathAndQuery, { headers: { 'X-Auth-Token': FD_KEY }, signal: AbortSignal.timeout(20000) });
+  const r = await fetch(FD_BASE + pathAndQuery, { headers: { 'X-Auth-Token': FD_KEY }, signal: AbortSignal.timeout(30000) });
   if (r.status === 429) throw new Error('API rate limit reached - try again in a minute');
-  if (r.status === 401 || r.status === 403) throw new Error('API rejected the key (HTTP ' + r.status + ') - check FOOTBALL_DATA_API_KEY and that your plan includes this competition');
+  if (r.status === 401 || r.status === 403) throw new Error('API rejected the key (HTTP ' + r.status + ') - check the token and that your plan includes this competition');
   if (!r.ok) throw new Error('API error HTTP ' + r.status);
   return r.json();
 }
 
+// Shows only each team's NEXT match (or the one in play). Everything else from the API is skipped / cleaned away.
 async function syncFixtures(trigger = 'manual') {
   if (!FD_KEY) throw new Error('FOOTBALL_DATA_API_KEY is not set on the server');
   if (syncing) throw new Error('A sync is already running');
   syncing = true;
-  const res = { at: new Date().toISOString(), trigger, added: 0, updated: 0, errors: [] };
+  const res = { at: new Date().toISOString(), trigger, added: 0, updated: 0, removed: 0, errors: [] };
   try {
-    const from = new Date(Date.now() - 86400000), days = Math.min(Math.max(+db.sync.daysAhead || 10, 1), 30);
     const comps = db.sync.comps.filter(c => FD_COMPS[c]);
-    for (const code of comps) {
-      for (let off = 0; off <= days + 1; off += 10) { // the API allows a limited date range per request
-        const a = new Date(from.getTime() + off * 86400000), b = new Date(Math.min(a.getTime() + 9 * 86400000, from.getTime() + (days + 1) * 86400000));
-        let data;
-        try { data = await fdGet('/competitions/' + code + '/matches?dateFrom=' + ymd(a) + '&dateTo=' + ymd(b)); }
-        catch (e) { res.errors.push(code + ': ' + e.message); break; }
-        for (const fx of data.matches || []) {
-          if (!fx || !fx.id || !fx.homeTeam || !fx.awayTeam || !fx.homeTeam.name || !fx.awayTeam.name) continue; // e.g. knockout slots with no teams yet
-          if (['CANCELLED'].includes(fx.status)) continue;
-          const ext = 'fd:' + fx.id, status = mapStatus(fx.status), kick = new Date(fx.utcDate);
-          if (isNaN(kick)) continue;
-          const cur = db.matches.find(x => x.extId === ext);
-          if (cur) {
-            let changed = false;
-            if (cur.kickoff !== kick.toISOString()) { cur.kickoff = kick.toISOString(); changed = true; }
-            // never pull a match the admin already set live back to "upcoming"
-            const st = (cur.status === 'live' && status === 'upcoming') ? 'live' : status;
-            if (cur.status !== st) { cur.status = st; changed = true; }
-            if (changed) res.updated++;
-          } else {
-            const h = teamFor(fx.homeTeam), w = teamFor(fx.awayTeam);
-            db.matches.push(cleanMatch({ extId: ext, home: h.name, away: w.name, homeId: h.id, awayId: w.id, homeLogo: h.logo, awayLogo: w.logo,
-              league: FD_COMPS[code], leagueLogo: '', kickoff: kick.toISOString(), status, pinned: false, sources: [], commentary: [] }, uid()));
-            res.added++;
-          }
-        }
-        await new Promise(r => setTimeout(r, 700)); // stay well inside the free-plan rate limit
+    const all = [];
+    for (let i = 0; i < comps.length; i++) {
+      if (i) await sleep(FD_DELAY);
+      try {
+        const data = await fdGet('/competitions/' + comps[i] + '/matches');
+        for (const fx of data.matches || []) all.push({ fx, code: comps[i] });
+      } catch (e) { res.errors.push(comps[i] + ': ' + e.message); }
+    }
+    const valid = all.filter(({ fx }) => fx && fx.id && fx.homeTeam && fx.awayTeam && fx.homeTeam.name && fx.awayTeam.name
+      && fx.status !== 'CANCELLED' && !isNaN(new Date(fx.utcDate)));
+
+    // each tracked team's next unfinished match
+    const nextOf = new Map();
+    for (const it of valid) {
+      const { fx, code } = it;
+      if (mapStatus(fx.status) === 'finished' || ['POSTPONED', 'SUSPENDED'].includes(fx.status)) continue;
+      for (const side of [fx.homeTeam, fx.awayTeam]) {
+        if (!FULL_COMPS.includes(code) && !isBig(side)) continue;
+        const key = side.id || norm(side.name), cur = nextOf.get(key);
+        if (!cur || new Date(fx.utcDate) < new Date(cur.fx.utcDate)) nextOf.set(key, it);
       }
     }
+    const wanted = new Set([...nextOf.values()].map(x => 'fd:' + x.fx.id));
+
+    for (const { fx, code } of valid) {
+      const ext = 'fd:' + fx.id, status = mapStatus(fx.status), kick = new Date(fx.utcDate).toISOString(), st = COMP_STYLE[code] || {};
+      const cur = db.matches.find(x => x.extId === ext);
+      if (cur) {
+        let changed = false;
+        if (cur.kickoff !== kick) { cur.kickoff = kick; changed = true; }
+        const ns = (cur.status === 'live' && status === 'upcoming') ? 'live' : status;   // never pull a match the admin set live back
+        if (cur.status !== ns) { cur.status = ns; changed = true; }
+        if (!cur.leagueLogo && st.logo) { cur.leagueLogo = st.logo; changed = true; }
+        if (!cur.bg && st.bg) { cur.bg = st.bg; changed = true; }
+        if (changed) res.updated++;
+      } else if (wanted.has(ext)) {
+        const h = teamFor(fx.homeTeam), w = teamFor(fx.awayTeam);
+        db.matches.push(cleanMatch({ extId: ext, home: h.name, away: w.name, homeId: h.id, awayId: w.id, homeLogo: h.logo, awayLogo: w.logo,
+          league: FD_COMPS[code], leagueLogo: st.logo || '', bg: st.bg || '', kickoff: kick, status, pinned: false, sources: [], commentary: [] }, uid()));
+        res.added++;
+      }
+    }
+
+    // tidy up automatic matches that are no longer a team's next match (only when every competition was read OK;
+    // matches with stream links, commentary or a pin are never removed)
+    if (!res.errors.length && valid.length) {
+      const before = db.matches.length, old = Date.now() - 2 * 86400000;
+      db.matches = db.matches.filter(m => {
+        if (!m.extId || m.pinned || m.status === 'live' || (m.sources && m.sources.length) || (m.commentary && m.commentary.length)) return true;
+        if (m.status === 'finished') return new Date(m.kickoff).getTime() > old;
+        return wanted.has(m.extId);
+      });
+      res.removed = before - db.matches.length;
+    }
     db.sync.last = res;
-    save(res.added > 0 || res.updated > 0);
+    save(res.added > 0 || res.updated > 0 || res.removed > 0);
     return res;
   } finally { syncing = false; }
 }
 function scheduleSync() {
   if (!FD_KEY) return;
-  const tick = () => { if (db.sync.enabled) syncFixtures('auto').then(r => console.log('Fixtures sync:', r.added, 'added,', r.updated, 'updated', r.errors.length ? r.errors : ''), e => console.log('Fixtures sync failed:', e.message)); };
+  const tick = () => { if (db.sync.enabled) syncFixtures('auto').then(r => console.log('Fixtures sync:', r.added, 'added,', r.updated, 'updated,', r.removed, 'removed', r.errors.length ? r.errors : ''), e => console.log('Fixtures sync failed:', e.message)); };
   setTimeout(tick, 5000);
   setInterval(tick, Math.max(1, +db.sync.everyHours || 6) * 3600e3);
 }
-const syncInfo = () => ({ keySet: !!FD_KEY, running: syncing, comps: FD_COMPS, selected: db.sync.comps, enabled: db.sync.enabled, daysAhead: db.sync.daysAhead, last: db.sync.last });
+const syncInfo = () => ({ keySet: !!FD_KEY, running: syncing, comps: FD_COMPS, selected: db.sync.comps, enabled: db.sync.enabled, last: db.sync.last });
 
 // ---------- server ----------
 http.createServer(async (req, res) => {
@@ -312,7 +352,7 @@ http.createServer(async (req, res) => {
     if (m === 'GET' && (p.startsWith('/logos/') || p.startsWith('/backgrounds/'))) {
       const name = path.basename(p); // badges are looked up in /logos, or next to server.js if they were uploaded flat
       let f = path.join(__dirname, p.split('/')[1], name);
-      if (!fs.existsSync(f) && (name === 'clubs.json' || /\.png$/i.test(name))) f = path.join(__dirname, name);
+      if (!fs.existsSync(f) && (name === 'clubs.json' || /\.(png|webp|jpe?g|svg|gif)$/i.test(name))) f = path.join(__dirname, name);
       try { const buf = fs.readFileSync(f); res.writeHead(200, { 'Content-Type': { '.png': 'image/png', '.json': 'application/json', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' }[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=604800' }); return res.end(buf); }
       catch { return send(res, 404, { error: 'not found' }); }
     }
@@ -378,7 +418,6 @@ http.createServer(async (req, res) => {
         const b = await readBody(req);
         db.sync.enabled = !!b.enabled;
         db.sync.comps = (Array.isArray(b.comps) ? b.comps : []).filter(c => FD_COMPS[c]);
-        db.sync.daysAhead = Math.min(Math.max(parseInt(b.daysAhead) || 10, 1), 30);
         save(false); return send(res, 200, syncInfo());
       }
       if (m === 'POST' && p === '/api/admin/sync/run') {
