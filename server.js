@@ -8,7 +8,9 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 3000;
 // hosts sometimes add spaces/quotes/newlines around variables, so they are cleaned
 const cleanEnv = v => String(v ?? '').trim().replace(/^(["'])(.*)\1$/, '$2').trim();
-const PASS = cleanEnv(process.env.ADMIN_PASSWORD ?? process.env.ADMIN_PASS) || 'admin123';
+// OPTIONAL: if your host does not pass environment variables to the app, type the admin password between the quotes:
+const ADMIN_PASSWORD_HARDCODED = '';
+const PASS = cleanEnv(process.env.ADMIN_PASSWORD ?? process.env.ADMIN_PASS) || cleanEnv(ADMIN_PASSWORD_HARDCODED) || 'admin123';
 const USING_DEFAULT_PASS = PASS === 'admin123';
 const DB_FILE = path.join(__dirname, 'data.json');
 const TOKEN = crypto.createHash('sha256').update('vltv:' + PASS).digest('hex');
@@ -203,7 +205,10 @@ async function proxy(req, res, u) {
 // ---------- automatic fixtures (football-data.org) ----------
 // Needs a free API token from https://www.football-data.org  ->  set it as FOOTBALL_DATA_API_KEY
 // (never paste the token into the code or into a chat). Free plan covers PL, La Liga and Champions League.
-const FD_KEY = cleanEnv(process.env.FOOTBALL_DATA_API_KEY);
+// If your host does not pass environment variables to the app, paste your football-data.org token between the quotes below.
+// Keep this file PRIVATE (never upload it to a public GitHub repo with the token inside).
+const FD_KEY_HARDCODED = '9bcb69ee5cb949ba8c91f636e192dbe1';
+const FD_KEY = cleanEnv(process.env.FOOTBALL_DATA_API_KEY) || cleanEnv(FD_KEY_HARDCODED);
 const FD_BASE = cleanEnv(process.env.FOOTBALL_DATA_BASE) || 'https://api.football-data.org/v4';
 const FD_COMPS = { PL: 'Premier League', PD: 'La Liga', CL: 'Champions League' };
 db.sync = Object.assign({ enabled: true, comps: ['PL', 'PD', 'CL'], daysAhead: 10, everyHours: 6, last: null }, db.sync || {});
