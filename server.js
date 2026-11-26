@@ -84,6 +84,7 @@ function cleanMatch(b, id) {
   const tid = v => /^[a-f0-9]{1,16}$/.test(String(v || '')) ? String(v) : '';
   return {
     id,
+    extId: /^fd:\d{1,12}$/.test(String(b.extId || '')) ? String(b.extId) : '',
     homeId: tid(b.homeId), awayId: tid(b.awayId),
     home: str(b.home, 40) || 'Home',
     away: str(b.away, 40) || 'Away',
@@ -198,6 +199,99 @@ async function proxy(req, res, u) {
   res.end(buf);
 }
 
+
+// ---------- automatic fixtures (football-data.org) ----------
+// Needs a free API token from https://www.football-data.org  ->  set it as FOOTBALL_DATA_API_KEY
+// (never paste the token into the code or into a chat). Free plan covers PL, La Liga and Champions League.
+const FD_KEY = cleanEnv(process.env.FOOTBALL_DATA_API_KEY);
+const FD_BASE = cleanEnv(process.env.FOOTBALL_DATA_BASE) || 'https://api.football-data.org/v4';
+const FD_COMPS = { PL: 'Premier League', PD: 'La Liga', CL: 'Champions League' };
+db.sync = Object.assign({ enabled: true, comps: ['PL', 'PD', 'CL'], daysAhead: 10, everyHours: 6, last: null }, db.sync || {});
+let syncing = false;
+
+let clubIndex = null;
+const norm = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/\b(fc|afc|cf|ac|as|sc|fk|ud|rc|cd|club|de|1907|calcio)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+function clubs() {
+  if (clubIndex) return clubIndex;
+  clubIndex = new Map();
+  try { for (const c of JSON.parse(fs.readFileSync(path.join(__dirname, 'clubs.json'), 'utf8'))) clubIndex.set(norm(c.name), c); } catch {}
+  return clubIndex;
+}
+function teamFor(apiTeam) {
+  const names = [apiTeam.name, apiTeam.shortName].filter(Boolean);
+  let team = null;
+  for (const n of names) { team = db.teams.find(t => norm(t.name) === norm(n)); if (team) break; }
+  if (team) return team;
+  let club = null;
+  for (const n of names) { club = clubs().get(norm(n)); if (club) break; }
+  const name = str(club ? club.name : (apiTeam.shortName || apiTeam.name), 40);
+  const logo = club ? club.logo : (isUrl(apiTeam.crest || '') ? str(apiTeam.crest, 500) : '');
+  team = { id: uid(), name, logo };
+  if (db.teams.length < 500) db.teams.push(team);
+  return team;
+}
+const mapStatus = s => ['IN_PLAY', 'PAUSED', 'LIVE'].includes(s) ? 'live' : ['FINISHED', 'AWARDED'].includes(s) ? 'finished' : 'upcoming';
+const ymd = d => d.toISOString().slice(0, 10);
+
+async function fdGet(pathAndQuery) {
+  const r = await fetch(FD_BASE + pathAndQuery, { headers: { 'X-Auth-Token': FD_KEY }, signal: AbortSignal.timeout(20000) });
+  if (r.status === 429) throw new Error('API rate limit reached - try again in a minute');
+  if (r.status === 401 || r.status === 403) throw new Error('API rejected the key (HTTP ' + r.status + ') - check FOOTBALL_DATA_API_KEY and that your plan includes this competition');
+  if (!r.ok) throw new Error('API error HTTP ' + r.status);
+  return r.json();
+}
+
+async function syncFixtures(trigger = 'manual') {
+  if (!FD_KEY) throw new Error('FOOTBALL_DATA_API_KEY is not set on the server');
+  if (syncing) throw new Error('A sync is already running');
+  syncing = true;
+  const res = { at: new Date().toISOString(), trigger, added: 0, updated: 0, errors: [] };
+  try {
+    const from = new Date(Date.now() - 86400000), days = Math.min(Math.max(+db.sync.daysAhead || 10, 1), 30);
+    const comps = db.sync.comps.filter(c => FD_COMPS[c]);
+    for (const code of comps) {
+      for (let off = 0; off <= days + 1; off += 10) { // the API allows a limited date range per request
+        const a = new Date(from.getTime() + off * 86400000), b = new Date(Math.min(a.getTime() + 9 * 86400000, from.getTime() + (days + 1) * 86400000));
+        let data;
+        try { data = await fdGet('/competitions/' + code + '/matches?dateFrom=' + ymd(a) + '&dateTo=' + ymd(b)); }
+        catch (e) { res.errors.push(code + ': ' + e.message); break; }
+        for (const fx of data.matches || []) {
+          if (!fx || !fx.id || !fx.homeTeam || !fx.awayTeam || !fx.homeTeam.name || !fx.awayTeam.name) continue; // e.g. knockout slots with no teams yet
+          if (['CANCELLED'].includes(fx.status)) continue;
+          const ext = 'fd:' + fx.id, status = mapStatus(fx.status), kick = new Date(fx.utcDate);
+          if (isNaN(kick)) continue;
+          const cur = db.matches.find(x => x.extId === ext);
+          if (cur) {
+            let changed = false;
+            if (cur.kickoff !== kick.toISOString()) { cur.kickoff = kick.toISOString(); changed = true; }
+            // never pull a match the admin already set live back to "upcoming"
+            const st = (cur.status === 'live' && status === 'upcoming') ? 'live' : status;
+            if (cur.status !== st) { cur.status = st; changed = true; }
+            if (changed) res.updated++;
+          } else {
+            const h = teamFor(fx.homeTeam), w = teamFor(fx.awayTeam);
+            db.matches.push(cleanMatch({ extId: ext, home: h.name, away: w.name, homeId: h.id, awayId: w.id, homeLogo: h.logo, awayLogo: w.logo,
+              league: FD_COMPS[code], leagueLogo: '', kickoff: kick.toISOString(), status, pinned: false, sources: [], commentary: [] }, uid()));
+            res.added++;
+          }
+        }
+        await new Promise(r => setTimeout(r, 700)); // stay well inside the free-plan rate limit
+      }
+    }
+    db.sync.last = res;
+    save(res.added > 0 || res.updated > 0);
+    return res;
+  } finally { syncing = false; }
+}
+function scheduleSync() {
+  if (!FD_KEY) return;
+  const tick = () => { if (db.sync.enabled) syncFixtures('auto').then(r => console.log('Fixtures sync:', r.added, 'added,', r.updated, 'updated', r.errors.length ? r.errors : ''), e => console.log('Fixtures sync failed:', e.message)); };
+  setTimeout(tick, 5000);
+  setInterval(tick, Math.max(1, +db.sync.everyHours || 6) * 3600e3);
+}
+const syncInfo = () => ({ keySet: !!FD_KEY, running: syncing, comps: FD_COMPS, selected: db.sync.comps, enabled: db.sync.enabled, daysAhead: db.sync.daysAhead, last: db.sync.last });
+
 // ---------- server ----------
 http.createServer(async (req, res) => {
   try {
@@ -213,7 +307,7 @@ http.createServer(async (req, res) => {
     if (m === 'GET' && (p.startsWith('/logos/') || p.startsWith('/backgrounds/'))) {
       const name = path.basename(p); // badges are looked up in /logos, or next to server.js if they were uploaded flat
       let f = path.join(__dirname, p.split('/')[1], name);
-      if (!fs.existsSync(f) && (name === 'clubs.json' || /\.(png|webp|jpe?g|gif)$/i.test(name))) f = path.join(__dirname, name);
+      if (!fs.existsSync(f) && (name === 'clubs.json' || /\.png$/i.test(name))) f = path.join(__dirname, name);
       try { const buf = fs.readFileSync(f); res.writeHead(200, { 'Content-Type': { '.png': 'image/png', '.json': 'application/json', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' }[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=604800' }); return res.end(buf); }
       catch { return send(res, 404, { error: 'not found' }); }
     }
@@ -247,7 +341,7 @@ http.createServer(async (req, res) => {
       if (mm) {
         const i = db.matches.findIndex(x => x.id === mm[1]);
         if (i < 0) return send(res, 404, { error: 'not found' });
-        if (m === 'PUT') { db.matches[i] = cleanMatch(await readBody(req), mm[1]); save(); return send(res, 200, db.matches[i]); }
+        if (m === 'PUT') { const nm = cleanMatch(await readBody(req), mm[1]); nm.extId = db.matches[i].extId || ''; db.matches[i] = nm; save(); return send(res, 200, db.matches[i]); }
         if (m === 'DELETE') { db.matches.splice(i, 1); save(); return send(res, 200, { ok: true }); }
       }
       if (m === 'POST' && p === '/api/admin/teams') {
@@ -273,6 +367,18 @@ http.createServer(async (req, res) => {
           save(); return send(res, 200, t);
         }
         if (m === 'DELETE') { db.teams.splice(i, 1); save(); return send(res, 200, { ok: true }); }
+      }
+      if (m === 'GET' && p === '/api/admin/sync') return send(res, 200, syncInfo());
+      if (m === 'PUT' && p === '/api/admin/sync') {
+        const b = await readBody(req);
+        db.sync.enabled = !!b.enabled;
+        db.sync.comps = (Array.isArray(b.comps) ? b.comps : []).filter(c => FD_COMPS[c]);
+        db.sync.daysAhead = Math.min(Math.max(parseInt(b.daysAhead) || 10, 1), 30);
+        save(false); return send(res, 200, syncInfo());
+      }
+      if (m === 'POST' && p === '/api/admin/sync/run') {
+        try { const r = await syncFixtures('manual'); return send(res, 200, r); }
+        catch (e) { return send(res, 400, { error: e.message }); }
       }
       if (m === 'PUT' && p === '/api/admin/commentary') {
         const b = await readBody(req);
@@ -305,6 +411,8 @@ http.createServer(async (req, res) => {
     send(res, 400, { error: String(e.message || e) });
   }
 }).listen(PORT, () => {
+  scheduleSync();
+  console.log(FD_KEY ? 'Auto fixtures: ON (football-data.org)' : 'Auto fixtures: OFF (set FOOTBALL_DATA_API_KEY to enable)');
   console.log(`Viewer: http://localhost:${PORT}/`);
   console.log(`Admin:  http://localhost:${PORT}/admin   (password: ${PASS === 'admin123' ? 'admin123 - change it with ADMIN_PASSWORD' : '[from ADMIN_PASSWORD]'})`);
 });
