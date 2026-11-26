@@ -78,9 +78,8 @@ a{color:var(--cyan)} @media(max-width:520px){.g2{grid-template-columns:1fr}}
 <h2>Automatic fixtures</h2>
 <div class="box" id="syncBox">
 <div class="meta" id="syncInfo">Loading…</div>
-<div class="chk"><input type="checkbox" id="syncOn"><label for="syncOn" style="margin:0;color:#fff;font-size:.9rem">Update fixtures automatically (every 6 hours)</label></div>
+<div class="chk"><input type="checkbox" id="syncOn"><label for="syncOn" style="margin:0;color:#fff;font-size:.9rem">Update fixtures automatically (every 6 hours) - shows each team's next match only</label></div>
 <label>Competitions</label><div class="bar" id="syncComps"></div>
-<label>How many days ahead (1–30)</label><input type="number" id="syncDays" min="1" max="30" value="10">
 <div class="acts"><button class="pri" id="syncSave">Save</button><button id="syncRun">🔄 Update now</button></div>
 </div>
 <h2>Card backgrounds</h2>
@@ -164,15 +163,15 @@ async function load(){ S = await (await fetch('/api/state', {cache:'no-store'}))
 let SY = null, selComps = new Set();
 async function loadSync(){
   try { SY = await api('GET', '/api/admin/sync'); } catch (e) { return; }
-  const last = SY.last ? 'Last update: ' + new Date(SY.last.at).toLocaleString() + ' · ' + SY.last.added + ' added, ' + SY.last.updated + ' changed' + (SY.last.errors && SY.last.errors.length ? ' · ⚠ ' + esc(SY.last.errors.join('; ')) : '') : 'Not updated yet.';
+  const last = SY.last ? 'Last update: ' + new Date(SY.last.at).toLocaleString() + ' · ' + SY.last.added + ' added, ' + SY.last.updated + ' changed, ' + (SY.last.removed || 0) + ' removed' + (SY.last.errors && SY.last.errors.length ? ' · ⚠ ' + esc(SY.last.errors.join('; ')) : '') : 'Not updated yet.';
   $('syncInfo').innerHTML = SY.keySet ? '✅ Connected to football-data.org. ' + last : '⚠ No API key on the server. Set <b>FOOTBALL_DATA_API_KEY</b> (free key from football-data.org) in your host settings, then restart.';
-  $('syncOn').checked = !!SY.enabled; $('syncDays').value = SY.daysAhead;
+  $('syncOn').checked = !!SY.enabled;
   selComps = new Set(SY.selected); $('syncComps').innerHTML = Object.entries(SY.comps).map(([k, n]) => '<button class="chip' + (selComps.has(k) ? ' on' : '') + '" data-c="' + k + '">' + esc(n) + '</button>').join('');
 }
 $('syncComps').onclick = e => { const b = e.target.closest('button'); if (!b) return; selComps.has(b.dataset.c) ? selComps.delete(b.dataset.c) : selComps.add(b.dataset.c); b.classList.toggle('on'); };
-$('syncSave').onclick = async () => { try { await api('PUT', '/api/admin/sync', { enabled: $('syncOn').checked, comps: [...selComps], daysAhead: +$('syncDays').value }); toast('Saved ✔'); loadSync(); } catch (e) { toast(e.message, true); } };
+$('syncSave').onclick = async () => { try { await api('PUT', '/api/admin/sync', { enabled: $('syncOn').checked, comps: [...selComps] }); toast('Saved ✔'); loadSync(); } catch (e) { toast(e.message, true); } };
 async function runSync(btn){
-  const t = btn.textContent; btn.disabled = true; btn.textContent = 'Updating…';
+  const t = btn.textContent; btn.disabled = true; btn.textContent = 'Updating… (about 30s)';
   try { const r = await api('POST', '/api/admin/sync/run'); toast(r.errors.length ? 'Done with problems: ' + r.errors[0] : 'Fixtures updated · ' + r.added + ' new, ' + r.updated + ' changed', !!r.errors.length); await load(); loadSync(); }
   catch (e) { toast(e.message, true); }
   btn.disabled = false; btn.textContent = t;
