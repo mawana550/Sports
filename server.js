@@ -208,7 +208,7 @@ async function proxy(req, res, u) {
 // Needs a free API token from https://www.football-data.org  ->  set it as FOOTBALL_DATA_API_KEY
 // If your host does not pass environment variables to the app, paste your football-data.org token between the quotes below.
 // Keep this file PRIVATE (never upload it to a public GitHub repo with the token inside).
-const FD_KEY_HARDCODED = '';
+const FD_KEY_HARDCODED = '9bcb69ee5cb949ba8c91f636e192dbe1';
 const FD_KEY = cleanEnv(process.env.FOOTBALL_DATA_API_KEY) || cleanEnv(FD_KEY_HARDCODED);
 const FD_BASE = cleanEnv(process.env.FOOTBALL_DATA_BASE) || 'https://api.football-data.org/v4';
 const FD_DELAY = +process.env.FD_DELAY_MS || 6500; // free plan = 10 requests a minute, so requests are spaced out
